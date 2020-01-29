@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29709.97
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "misc", "misc", "{891E9A53-403C-4210-8B3E-65D77EE1B952}"
+	ProjectSection(SolutionItems) = preProject
+		misc\changelog.txt = misc\changelog.txt
+		misc\todo.txt = misc\todo.txt
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "nuget", "nuget", "{AC5574B3-1B7C-42EA-9294-7E1C2F7EEB23}"
+	ProjectSection(SolutionItems) = preProject
+		nuget\TauCode.Mq.Testing.nuspec = nuget\TauCode.Mq.Testing.nuspec
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{715EDDC4-17D9-4479-9674-FFCE0CD3E122}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{3B5908A1-9D59-4C3D-8696-5040FB7FA951}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "TauCode.Mq.Testing", "src\TauCode.Mq.Testing\TauCode.Mq.Testing.csproj", "{483000FA-6E37-4A21-8B19-4081316BD9AF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TauCode.Mq.Testing.Tests", "tests\TauCode.Mq.Testing.Tests\TauCode.Mq.Testing.Tests.csproj", "{2BFC393D-BC8B-4567-BC0A-E8A4419EFB42}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{483000FA-6E37-4A21-8B19-4081316BD9AF}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{483000FA-6E37-4A21-8B19-4081316BD9AF}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{483000FA-6E37-4A21-8B19-4081316BD9AF}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{483000FA-6E37-4A21-8B19-4081316BD9AF}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2BFC393D-BC8B-4567-BC0A-E8A4419EFB42}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2BFC393D-BC8B-4567-BC0A-E8A4419EFB42}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2BFC393D-BC8B-4567-BC0A-E8A4419EFB42}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2BFC393D-BC8B-4567-BC0A-E8A4419EFB42}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{483000FA-6E37-4A21-8B19-4081316BD9AF} = {715EDDC4-17D9-4479-9674-FFCE0CD3E122}
+		{2BFC393D-BC8B-4567-BC0A-E8A4419EFB42} = {3B5908A1-9D59-4C3D-8696-5040FB7FA951}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {16A854E0-2DB7-4D68-8AE3-6625FDF19211}
+	EndGlobalSection
+EndGlobal
