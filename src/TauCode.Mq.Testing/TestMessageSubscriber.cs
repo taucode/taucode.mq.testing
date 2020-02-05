@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 
 namespace TauCode.Mq.Testing
 {
@@ -12,24 +13,24 @@ namespace TauCode.Mq.Testing
 
         public TestMessageMedia Media { get; }
 
-        protected override void StartImpl()
+        protected override void SubscribeImpl(IEnumerable<ISubscriptionRequest> requests)
         {
-            base.StartImpl();
-
-            foreach (var pair in this.Bundles)
+            foreach (var request in requests)
             {
-                var bundle = pair.Value;
-                var topic = bundle.Topic;
-
-                if (topic == null)
+                if (request.Topic == null)
                 {
-                    this.Media.Subscribe(bundle.MessageType, bundle.Handle);
+                    this.Media.Subscribe(request.MessageType, request.Handler);
                 }
                 else
                 {
-                    this.Media.Subscribe(bundle.MessageType, bundle.Handle, topic);
+                    this.Media.Subscribe(request.MessageType, request.Handler, request.Topic);
                 }
             }
+        }
+
+        protected override void UnsubscribeImpl()
+        {
+            // todo: refactor test media for unsubscription.
         }
     }
 }

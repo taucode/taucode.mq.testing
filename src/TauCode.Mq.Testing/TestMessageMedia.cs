@@ -60,14 +60,6 @@ namespace TauCode.Mq.Testing
                         handler(message);
                     }
                 }
-
-                // todo clean
-                //throw new NotImplementedException();
-
-                //foreach (var handler in _nullTopicHandlers)
-                //{
-                //    handler(message);
-                //}
             }
         }
 
@@ -156,6 +148,11 @@ namespace TauCode.Mq.Testing
             }
 
             subscription.AddHandler(handler, topic);
+        }
+
+        public void Reset()
+        {
+            _subscriptions.Clear();
         }
     }
 }
