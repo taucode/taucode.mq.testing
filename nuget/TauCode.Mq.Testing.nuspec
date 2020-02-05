@@ -14,7 +14,7 @@
     </releaseNotes>
     <tags>taucode message queue testing</tags>
     <dependencies>
-      <dependency id="TauCode.Mq" version="1.0.0-dev-2019-12-29-16-05" />
+      <dependency id="TauCode.Mq" version="1.0.0-dev-2020-01-30-13-47" />
     </dependencies>
   </metadata>
   <files>
