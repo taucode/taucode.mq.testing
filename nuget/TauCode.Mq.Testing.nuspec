@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>TauCode.Mq.Testing</id>
-    <version>1.0.0.0-dev-2020-02-05-15-27</version>
+    <version>1.0.0.0-dev-2020-02-12-18-29</version>
     <authors>TauCode</authors>
     <owners>TauCode</owners>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
@@ -10,11 +10,11 @@
     <projectUrl>https://github.com/taucode/taucode.mq.testing</projectUrl>
     <description>MQ testing support library</description>
     <releaseNotes>
-      Initial version
+      Updated references.
     </releaseNotes>
     <tags>taucode message queue testing</tags>
     <dependencies>
-      <dependency id="TauCode.Mq" version="1.0.0-dev-2020-01-30-13-47" />
+      <dependency id="TauCode.Mq" version="1.0.0-dev-2020-02-12-17-54" />
     </dependencies>
   </metadata>
   <files>
