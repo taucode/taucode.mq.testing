@@ -1,11 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>netstandard2.1</TargetFramework>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TauCode.Mq" Version="1.0.0-dev-2020-02-13-19-06" />
+    <PackageReference Include="TauCode.Mq" Version="1.0.0-dev-2020-03-16-00-35" />
   </ItemGroup>
 
 </Project>
