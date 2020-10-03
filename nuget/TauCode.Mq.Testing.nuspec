@@ -15,7 +15,8 @@
     <tags>taucode message queue testing</tags>
     <dependencies>
       <group targetFramework=".NETStandard2.1">
-        <dependency id="TauCode.Mq" version="1.3.0" />
+        <dependency id="Newtonsoft.Json" version="12.0.3" />
+        <dependency id="TauCode.Mq" version="1.3.2-dev-2020-10-03-22-43" />
       </group>
     </dependencies>
   </metadata>
