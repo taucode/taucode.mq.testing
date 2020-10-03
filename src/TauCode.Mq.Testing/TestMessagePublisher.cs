@@ -5,21 +5,43 @@ namespace TauCode.Mq.Testing
 {
     public class TestMessagePublisher : MessagePublisherBase
     {
-        public TestMessagePublisher(TestMessageMedia media)
+        #region Fields
+
+        private readonly ITestMqMedia _media;
+
+        #endregion
+
+        #region Constructor
+
+        public TestMessagePublisher(ITestMqMedia media)
         {
-            this.Media = media ?? throw new ArgumentNullException(nameof(media));
+            _media = media ?? throw new ArgumentNullException(nameof(media));
         }
 
-        public TestMessageMedia Media { get; }
+        #endregion
+
+        #region Overridden
+
+        protected override void InitImpl()
+        {
+            // idle
+        }
+
+        protected override void ShutdownImpl()
+        {
+            // idle
+        }
 
         protected override void PublishImpl(IMessage message)
         {
-            this.Media.Publish(message);
+            _media.Publish(message.GetType(), message);
         }
 
         protected override void PublishImpl(IMessage message, string topic)
         {
-            this.Media.Publish(message, topic);
+            _media.Publish(message.GetType(), message, topic);
         }
+
+        #endregion
     }
 }
