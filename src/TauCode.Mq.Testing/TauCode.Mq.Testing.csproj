@@ -6,7 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
-    <PackageReference Include="TauCode.Mq" Version="1.3.2-dev-2020-10-08-15-30" />
+    <PackageReference Include="TauCode.Mq" Version="1.3.2.1-dev-2020-10-11-20-43" />
   </ItemGroup>
 
 </Project>

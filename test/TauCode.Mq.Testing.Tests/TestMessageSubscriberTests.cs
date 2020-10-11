@@ -4,7 +4,6 @@ using System;
 using System.Text;
 using System.Threading.Tasks;
 using TauCode.Extensions;
-using TauCode.Infrastructure.Time;
 using TauCode.Mq.Exceptions;
 using TauCode.Mq.Testing.Tests.BadHandlers;
 using TauCode.Mq.Testing.Tests.ContextFactories;
@@ -32,7 +31,6 @@ namespace TauCode.Mq.Testing.Tests
         {
             _media = new TestMqMedia();
 
-            TimeProvider.Reset();
             MessageRepository.Instance.Clear();
 
             _log = new StringWriterWithEncoding(Encoding.UTF8);
