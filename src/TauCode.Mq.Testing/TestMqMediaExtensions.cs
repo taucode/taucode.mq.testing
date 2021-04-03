@@ -1,18 +1,14 @@
 ﻿using System;
 using System.Threading.Tasks;
+using TauCode.Mq.Abstractions;
 
 namespace TauCode.Mq.Testing
 {
     public static class TestMqMediaExtensions
     {
-        public static void Publish<TMessage>(this ITestMqMedia media, TMessage message)
+        public static void Publish<TMessage>(this ITestMqMedia media, TMessage message) where TMessage : IMessage
         {
             media.Publish(typeof(TMessage), message);
-        }
-
-        public static void Publish<TMessage>(this ITestMqMedia media, TMessage message, string topic)
-        {
-            media.Publish(typeof(TMessage), message, topic);
         }
 
         public static IDisposable Subscribe<TMessage>(this ITestMqMedia media, Func<TMessage, Task> handler)

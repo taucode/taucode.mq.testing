@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace TauCode.Mq.Testing
@@ -9,7 +8,6 @@ namespace TauCode.Mq.Testing
         #region Fields
 
         private readonly ITestMqMedia _media;
-        private readonly List<IDisposable> _handles;
 
         #endregion
 
@@ -19,13 +17,12 @@ namespace TauCode.Mq.Testing
             : base(contextFactory)
         {
             _media = media ?? throw new ArgumentNullException(nameof(media));
-            _handles = new List<IDisposable>();
         }
 
         #endregion
 
         #region Overridden
-
+        
         protected override void InitImpl()
         {
             // idle
@@ -33,10 +30,6 @@ namespace TauCode.Mq.Testing
 
         protected override void ShutdownImpl()
         {
-            foreach (var handle in _handles)
-            {
-                handle.Dispose();
-            }
         }
 
         protected override IDisposable SubscribeImpl(ISubscriptionRequest subscriptionRequest)

@@ -1,22 +1,41 @@
-﻿using Newtonsoft.Json;
+﻿using Microsoft.Extensions.Logging;
+using Moq;
+using Newtonsoft.Json;
 using NUnit.Framework;
+using Serilog;
+using Serilog.Extensions.Logging;
 using System;
 using System.Threading.Tasks;
+using TauCode.Infrastructure.Logging;
 using TauCode.Mq.Testing.Tests.Messages;
 using TauCode.Working;
-using TauCode.Working.Exceptions;
 
 namespace TauCode.Mq.Testing.Tests
 {
     [TestFixture]
     public class TestMessagePublisherTests
     {
+        private StringLogger _logger;
         private ITestMqMedia _media;
 
         [SetUp]
         public void SetUp()
         {
-            _media = new TestMqMedia();
+            _logger = new StringLogger();
+            _media = new TestMqMedia(_logger);
+
+            var collection = new LoggerProviderCollection();
+
+            Log.Logger = new LoggerConfiguration()
+                .WriteTo.Providers(collection)
+                .MinimumLevel
+                .Debug()
+                .CreateLogger();
+
+            var providerMock = new Mock<ILoggerProvider>();
+            providerMock.Setup(x => x.CreateLogger(It.IsAny<string>())).Returns(_logger);
+
+            collection.AddProvider(providerMock.Object);
         }
 
         [TearDown]
@@ -25,10 +44,20 @@ namespace TauCode.Mq.Testing.Tests
             _media.Dispose();
         }
 
+        private IMessagePublisher CreateMessagePublisher(string name = null)
+        {
+            var messagePublisher = new TestMessagePublisher(_media)
+            {
+                Name = name,
+            };
+
+            return messagePublisher;
+        }
+
         #region ctor
 
         [Test]
-        public void Constructor_NoArguments_RunsOk()
+        public void Constructor_ValidMedia_RunsOk()
         {
             // Arrange
 
@@ -39,113 +68,26 @@ namespace TauCode.Mq.Testing.Tests
             Assert.Pass();
         }
 
+        [Test]
+        public void Constructor_MediaIsNull_ThrowsException()
+        {
+            // Arrange
+
+            // Act
+            var ex = Assert.Throws<ArgumentNullException>(() => new TestMessagePublisher(null));
+
+            // Assert
+            Assert.That(ex.ParamName, Is.EqualTo("media"));
+        }
+
         #endregion
 
         #region Publish(IMessage)
 
         [Test]
-        public void PublishIMessage_ValidStateAndArgument_PublishesAndProperSubscriberHandles()
+        public async Task Publish_ValidStateAndArguments_PublishesAndProperSubscriberHandles()
         {
-            // Arrange
-
-            // Act
-
-            // Assert
-            Assert.Pass($"See '{nameof(PublishIMessageString_ValidStateAndArguments_PublishesAndProperSubscriberHandles)}', both methods are UT'ed there.");
-        }
-
-        [Test]
-        public void PublishIMessage_ArgumentIsNull_ThrowsArgumentNullException()
-        {
-            // Arrange
-            using var publisher = new TestMessagePublisher(_media);
-            publisher.Start();
-
-            // Act
-            var ex = Assert.Throws<ArgumentNullException>(() => publisher.Publish(null));
-
-            // Assert
-            Assert.That(ex.ParamName, Is.EqualTo("message"));
-        }
-
-        [Test]
-        public void PublishIMessage_ArgumentIsNotClass_ThrowsArgumentException()
-        {
-            // Arrange
-            using var publisher = new TestMessagePublisher(_media);
-            publisher.Start();
-
-            // Act
-            var ex = Assert.Throws<ArgumentException>(() => publisher.Publish(new StructMessage()));
-
-            // Assert
-            Assert.That(ex,
-                Has.Message.StartWith(
-                    $"Cannot publish instance of '{typeof(StructMessage).FullName}'. Message type must be a class."));
-            Assert.That(ex.ParamName, Is.EqualTo("message"));
-        }
-
-        [Test]
-        public void PublishIMessage_ArgumentPropertyThrows_ThrowsJsonSerializationException()
-        {
-            // Arrange
-            using var publisher = new TestMessagePublisher(_media);
-            publisher.Start();
-
-            // Act
-            var ex = Assert.Throws<JsonSerializationException>(() =>
-            {
-                publisher.Publish(new ThrowPropertyMessage
-                {
-                    BadProperty = "bad",
-                });
-            });
-
-            // Assert
-            Assert.That(ex.InnerException, Is.TypeOf<NotSupportedException>());
-            Assert.That(ex.InnerException, Has.Message.EqualTo("Property is bad!"));
-        }
-
-        [Test]
-        public void PublishIMessage_NotStarted_ThrowsMqException()
-        {
-            // Arrange
-            using var publisher = new TestMessagePublisher(_media);
-
-            // Act
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => publisher.Publish(new HelloMessage()));
-
-            // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Stopped)."));
-        }
-
-        [Test]
-        public void PublishIMessage_Disposed_ThrowsObjectDisposedException()
-        {
-            // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
-
-            publisher.Dispose();
-
-            // Act
-            var ex = Assert.Throws<ObjectDisposedException>(() => publisher.Publish(new HelloMessage()));
-
-            // Assert
-            Assert.That(ex.ObjectName, Is.EqualTo("my-publisher"));
-        }
-
-        #endregion
-
-        #region Publish(IMessage, string)
-
-        [Test]
-        public async Task PublishIMessageString_ValidStateAndArguments_PublishesAndProperSubscriberHandles()
-        {
-            // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
 
@@ -165,13 +107,14 @@ namespace TauCode.Mq.Testing.Tests
                 "some-topic");
 
             // Act
-            publisher.Publish(new HelloMessage
+            publisher.Publish(
+                new HelloMessage
                 {
                     Name = "mia",
-                },
-                "some-topic");
+                    Topic = "some-topic",
+                });
 
-            await Task.Delay(100);
+            await Task.Delay(150);
 
             name1 = name;
             nameWithTopic1 = nameWithTopic;
@@ -181,7 +124,7 @@ namespace TauCode.Mq.Testing.Tests
                 Name = "deserea",
             });
 
-            await Task.Delay(100);
+            await Task.Delay(150);
 
             name2 = name;
             nameWithTopic2 = nameWithTopic;
@@ -195,28 +138,52 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void PublishIMessageString_MessageIsNull_ThrowsArgumentNullException()
+        public void Publish_ArgumentIsNull_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
+
             publisher.Start();
 
             // Act
-            var ex = Assert.Throws<ArgumentNullException>(() => publisher.Publish(null, "some-topic"));
+            var ex = Assert.Throws<ArgumentNullException>(() => publisher.Publish(null));
 
             // Assert
             Assert.That(ex.ParamName, Is.EqualTo("message"));
         }
 
         [Test]
-        public void PublishIMessageString_MessageIsNotClass_ThrowsArgumentException()
+        public void Publish_ArgumentIsNotClassNoTopic_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
+
             publisher.Start();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => publisher.Publish(new StructMessage()));
+
+            // Assert
+            Assert.That(
+                ex,
+                Has.Message.StartWith(
+                    $"Cannot publish instance of '{typeof(StructMessage).FullName}'. Message type must be a class."));
+            Assert.That(ex.ParamName, Is.EqualTo("message"));
+        }
+
+        [Test]
+        public void Publish_ArgumentIsNotClassWithTopic_ThrowsException()
+        {
+            // Arrange
+            using var publisher = this.CreateMessagePublisher();
+
+            publisher.Start();
+
+            // Act
+            var ex = Assert.Throws<ArgumentException>(() => publisher.Publish(new StructMessage
+            {
+                Topic = "some-topic",
+            }));
 
             // Assert
             Assert.That(ex,
@@ -226,50 +193,85 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        [TestCase(null)]
-        [TestCase("")]
-        public void PublishIMessageString_TopicIsNullOrEmpty_ThrowsTodo(string badTopic)
+        public void Publish_ArgumentPropertyThrows_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
+
             publisher.Start();
 
             // Act
-            var ex = Assert.Throws<ArgumentException>(() => publisher.Publish(new HelloMessage(), badTopic));
+            var ex = Assert.Throws<JsonSerializationException>(() =>
+            {
+                publisher.Publish(new ThrowPropertyMessage
+                {
+                    BadProperty = "bad",
+                });
+            });
 
             // Assert
-            Assert.That(ex,
-                Has.Message.StartWith(
-                    "'topic' cannot be null or empty. If you need to publish a topicless message, use the 'Publish(IMessage message)' overload."));
-            Assert.That(ex.ParamName, Is.EqualTo("topic"));
+            Assert.That(ex.InnerException, Is.TypeOf<NotSupportedException>());
+            Assert.That(ex.InnerException, Has.Message.EqualTo("Property is bad!"));
         }
 
         [Test]
-        public void PublishIMessageString_NotStarted_ThrowsMqException()
+        public void Publish_NoTopicNotStarted_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
 
             // Act
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => publisher.Publish(new HelloMessage(), "some-topic"));
+            var ex = Assert.Throws<InvalidOperationException>(() => publisher.Publish(new HelloMessage()));
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Stopped)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Publish'. Worker state is 'Stopped'."));
         }
 
         [Test]
-        public void PublishIMessageString_Disposed_ThrowsObjectDisposedException()
+        public void Publish_WithTopicNotStarted_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher",
-            };
+            using var publisher = this.CreateMessagePublisher();
+
+            // Act
+            var ex = Assert.Throws<InvalidOperationException>(() => publisher.Publish(
+                new HelloMessage
+                {
+                    Topic = "some-topic",
+                }));
+
+            // Assert
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Publish'. Worker state is 'Stopped'."));
+        }
+
+        [Test]
+        public void Publish_NoTopicDisposed_ThrowsException()
+        {
+            // Arrange
+            using var publisher = this.CreateMessagePublisher("my-publisher");
 
             publisher.Dispose();
 
             // Act
-            var ex = Assert.Throws<ObjectDisposedException>(() => publisher.Publish(new HelloMessage(), "my-topic"));
+            var ex = Assert.Throws<ObjectDisposedException>(() => publisher.Publish(new HelloMessage()));
+
+            // Assert
+            Assert.That(ex.ObjectName, Is.EqualTo("my-publisher"));
+        }
+
+        [Test]
+        public void Publish_WithTopicDisposed_ThrowsException()
+        {
+            // Arrange
+            using var publisher = this.CreateMessagePublisher("my-publisher");
+
+            publisher.Dispose();
+
+            // Act
+            var ex = Assert.Throws<ObjectDisposedException>(() => publisher.Publish(new HelloMessage
+            {
+                Topic = "my-topic",
+            }));
 
             // Assert
             Assert.That(ex.ObjectName, Is.EqualTo("my-publisher"));
@@ -313,7 +315,7 @@ namespace TauCode.Mq.Testing.Tests
             // Arrange
             using var publisher = new TestMessagePublisher(_media)
             {
-                Name = "name1",
+                Name = "name1"
             };
 
             // Act
@@ -351,10 +353,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_Started_EqualsToRunning()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             // Act
             publisher.Start();
@@ -367,10 +366,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_Stopped_EqualsToStopped()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
 
@@ -385,10 +381,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_DisposedJustAfterCreation_EqualsToStopped()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             // Act
             publisher.Dispose();
@@ -401,10 +394,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_DisposedAfterStarted_EqualsToStopped()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
 
@@ -419,10 +409,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_DisposedAfterStopped_EqualsToStopped()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
             publisher.Stop();
@@ -438,10 +425,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_DisposedAfterDisposed_EqualsToStopped()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
             publisher.Stop();
@@ -474,7 +458,7 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_Started_EqualsToFalse()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
 
             // Act
             publisher.Start();
@@ -487,7 +471,8 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_Stopped_EqualsToFalse()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
+
             publisher.Start();
 
             // Act
@@ -501,7 +486,7 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_DisposedJustAfterCreation_EqualsToTrue()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
 
             // Act
             publisher.Dispose();
@@ -514,7 +499,8 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_DisposedAfterStarted_EqualsToTrue()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
+
             publisher.Start();
 
             // Act
@@ -528,7 +514,7 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_DisposedAfterStopped_EqualsToTrue()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
             publisher.Stop();
@@ -544,7 +530,8 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_DisposedAfterDisposed_EqualsToTrue()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media);
+            using var publisher = this.CreateMessagePublisher();
+
             publisher.Dispose();
 
             // Act
@@ -562,10 +549,7 @@ namespace TauCode.Mq.Testing.Tests
         public void Start_JustCreated_Starts()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             // Act
             publisher.Start();
@@ -575,31 +559,26 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void Start_Started_ThrowsInappropriateWorkerStateException()
+        public void Start_Started_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher("my-publisher");
 
             publisher.Start();
 
             // Act
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => publisher.Start());
+            var ex = Assert.Throws<InvalidOperationException>(() => publisher.Start());
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Running)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Start'. Worker state is 'Running'. Worker name is 'my-publisher'."));
         }
 
         [Test]
         public void Start_Stopped_Starts()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {   
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
+
 
             publisher.Start();
             publisher.Stop();
@@ -612,13 +591,11 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void Start_Disposed_ThrowsObjectDisposedException()
+        public void Start_Disposed_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher("my-publisher");
+
             publisher.Dispose();
 
             // Act
@@ -633,29 +610,23 @@ namespace TauCode.Mq.Testing.Tests
         #region Stop()
 
         [Test]
-        public void Stop_JustCreated_ThrowsInappropriateWorkerStateException()
+        public void Stop_JustCreated_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher("my-publisher");
 
             // Act
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => publisher.Stop());
+            var ex = Assert.Throws<InvalidOperationException>(() => publisher.Stop());
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Stopped)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Stop'. Worker state is 'Stopped'. Worker name is 'my-publisher'."));
         }
 
         [Test]
         public void Stop_Started_Stops()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
 
@@ -667,32 +638,27 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void Stop_Stopped_ThrowsInappropriateWorkerStateException()
+        public void Stop_Stopped_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher("my-publisher");
 
             publisher.Start();
             publisher.Stop();
 
             // Act
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => publisher.Stop());
+            var ex = Assert.Throws<InvalidOperationException>(() => publisher.Stop());
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Stopped)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Stop'. Worker state is 'Stopped'. Worker name is 'my-publisher'."));
         }
 
         [Test]
-        public void Stop_Disposed_ThrowsObjectDisposedException()
+        public void Stop_Disposed_ThrowsException()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher("my-publisher");
+
             publisher.Dispose();
 
             // Act
@@ -710,10 +676,7 @@ namespace TauCode.Mq.Testing.Tests
         public void Dispose_JustCreated_Disposes()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             // Act
             publisher.Dispose();
@@ -726,10 +689,7 @@ namespace TauCode.Mq.Testing.Tests
         public void Dispose_Started_Disposes()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
 
@@ -744,10 +704,7 @@ namespace TauCode.Mq.Testing.Tests
         public void Dispose_Stopped_Disposes()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Start();
             publisher.Stop();
@@ -763,10 +720,7 @@ namespace TauCode.Mq.Testing.Tests
         public void Disposes_Disposed_DoesNothing()
         {
             // Arrange
-            using var publisher = new TestMessagePublisher(_media)
-            {
-                Name = "my-publisher"
-            };
+            using var publisher = this.CreateMessagePublisher();
 
             publisher.Dispose();
 

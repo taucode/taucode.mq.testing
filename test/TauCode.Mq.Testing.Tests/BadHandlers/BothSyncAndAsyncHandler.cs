@@ -13,7 +13,7 @@ namespace TauCode.Mq.Testing.Tests.BadHandlers
             throw new NotSupportedException();
         }
 
-        public void Handle(object message)
+        public void Handle(IMessage message)
         {
             throw new NotSupportedException();
         }
@@ -23,7 +23,7 @@ namespace TauCode.Mq.Testing.Tests.BadHandlers
             throw new NotSupportedException();
         }
 
-        public Task HandleAsync(object message, CancellationToken cancellationToken)
+        public Task HandleAsync(IMessage message, CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
         }
