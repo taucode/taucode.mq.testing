@@ -37,11 +37,6 @@ namespace TauCode.Mq.Testing
             _media.Publish(message.GetType(), message);
         }
 
-        protected override void PublishImpl(IMessage message, string topic)
-        {
-            _media.Publish(message.GetType(), message, topic);
-        }
-
         #endregion
     }
 }

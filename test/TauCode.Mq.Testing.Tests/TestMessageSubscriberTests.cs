@@ -1,9 +1,11 @@
-﻿using NUnit.Framework;
+﻿using Microsoft.Extensions.Logging;
+using Moq;
+using NUnit.Framework;
 using Serilog;
+using Serilog.Extensions.Logging;
 using System;
-using System.Text;
 using System.Threading.Tasks;
-using TauCode.Extensions;
+using TauCode.Infrastructure.Logging;
 using TauCode.Mq.Exceptions;
 using TauCode.Mq.Testing.Tests.BadHandlers;
 using TauCode.Mq.Testing.Tests.ContextFactories;
@@ -14,32 +16,36 @@ using TauCode.Mq.Testing.Tests.Handlers.Hello.Async;
 using TauCode.Mq.Testing.Tests.Handlers.Hello.Sync;
 using TauCode.Mq.Testing.Tests.Messages;
 using TauCode.Working;
-using TauCode.Working.Exceptions;
 
 // todo: check that topic, correlationId are preserved.
-
 namespace TauCode.Mq.Testing.Tests
 {
     [TestFixture]
     public class TestMessageSubscriberTests
     {
+        private StringLogger _logger;
         private ITestMqMedia _media;
-        private StringWriterWithEncoding _log;
 
         [SetUp]
         public void SetUp()
         {
-            _media = new TestMqMedia();
-
             MessageRepository.Instance.Clear();
 
-            _log = new StringWriterWithEncoding(Encoding.UTF8);
+            _logger = new StringLogger();
+            _media = new TestMqMedia(_logger);
+
+            var collection = new LoggerProviderCollection();
 
             Log.Logger = new LoggerConfiguration()
-                .WriteTo.TextWriter(_log)
+                .WriteTo.Providers(collection)
                 .MinimumLevel
                 .Debug()
                 .CreateLogger();
+
+            var providerMock = new Mock<ILoggerProvider>();
+            providerMock.Setup(x => x.CreateLogger(It.IsAny<string>())).Returns(_logger);
+
+            collection.AddProvider(providerMock.Object);
 
             DecayingMessage.IsPropertyDecayed = false;
             DecayingMessage.IsCtorDecayed = false;
@@ -51,44 +57,41 @@ namespace TauCode.Mq.Testing.Tests
             _media.Dispose();
         }
 
-        private string GetLog() => _log.ToString();
+        private string CurrentLog => _logger.ToString();
+
+        private IMessageSubscriber CreateMessageSubscriber(
+            IMessageHandlerContextFactory factory,
+            string name = null)
+        {
+            var subscriber = new TestMessageSubscriber(_media, factory)
+            {
+                Name = name,
+                Logger = _logger
+            };
+
+            return subscriber;
+        }
+
+        private IMessageSubscriber CreateMessageSubscriber<TFactory>(
+            string name = null) where TFactory : IMessageHandlerContextFactory, new()
+        {
+            var factory = new TFactory();
+            var subscriber = new TestMessageSubscriber(_media, factory)
+            {
+                Name = name,
+                Logger = _logger
+            };
+            return subscriber;
+        }
 
         #region ctor
 
         [Test]
-        public void ConstructorOneArgument_ValidArgument_RunsOk()
+        public void Constructor_ValidArguments_RunsOk()
         {
             // Arrange
             var factory = new GoodContextFactory();
 
-            // Act
-            using var subscriber = new TestMessageSubscriber(_media, factory)
-            {
-                Name = "my-subscriber"
-            };
-
-            // Assert
-            Assert.That(subscriber.ContextFactory, Is.SameAs(factory));
-        }
-
-        [Test]
-        public void ConstructorOneArgument_ArgumentIsNull_ThrowsArgumentNullException()
-        {
-            // Arrange
-
-            // Act
-            var ex = Assert.Throws<ArgumentNullException>(() => new TestMessageSubscriber(_media, null));
-
-            // Assert
-            Assert.That(ex.ParamName, Is.EqualTo("contextFactory"));
-        }
-
-        [Test]
-        public void ConstructorTwoArguments_ValidArguments_RunsOk()
-        {
-            // Arrange
-            var factory = new GoodContextFactory();
-            
             // Act
             using var subscriber = new TestMessageSubscriber(_media, factory);
 
@@ -97,7 +100,7 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void ConstructorTwoArguments_FactoryArgumentIsNull_ThrowsArgumentNullException()
+        public void ConstructorTwoArguments_FactoryArgumentIsNull_ThrowsException()
         {
             // Arrange
 
@@ -115,7 +118,7 @@ namespace TauCode.Mq.Testing.Tests
         #region ContextFactory
 
         [Test]
-        public async Task ContextFactory_ThrowsOnCreateContext_LogsException()
+        public async Task ContextFactory_ThrowsException()
         {
             // Arrange
             IMessageHandlerContextFactory factory = new BadContextFactory(
@@ -128,7 +131,8 @@ namespace TauCode.Mq.Testing.Tests
                 false,
                 false);
 
-            using IMessageSubscriber subscriber = new TestMessageSubscriber(_media, factory);
+            using var subscriber = this.CreateMessageSubscriber(factory);
+
             subscriber.Subscribe(typeof(HelloHandler));
 
             subscriber.Start();
@@ -143,7 +147,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(500);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain($"Failed to create context."));
         }
 
@@ -161,15 +165,12 @@ namespace TauCode.Mq.Testing.Tests
                 false,
                 false);
 
-            using var subscriber = new TestMessageSubscriber(_media, factory)
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber(factory);
 
             subscriber.Subscribe(typeof(HelloHandler));
 
             subscriber.Start();
-            
+
             // Act
             _media.Publish(
                 new HelloMessage
@@ -177,10 +178,10 @@ namespace TauCode.Mq.Testing.Tests
                     Name = "Geki",
                 });
 
-            await Task.Delay(500);
+            await Task.Delay(200);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain($"Method 'CreateContext' of factory '{typeof(BadContextFactory).FullName}' returned 'null'."));
         }
 
@@ -200,10 +201,13 @@ namespace TauCode.Mq.Testing.Tests
                 false,
                 false);
 
-            using IMessageSubscriber subscriber = new TestMessageSubscriber(_media, factory);
+            using var subscriber = this.CreateMessageSubscriber(factory);
+
             subscriber.Subscribe(typeof(HelloHandler));
 
             subscriber.Start();
+
+            //using var bus = RabbitHutch.CreateBus("host=localhost");
 
             // Act
             _media.Publish(
@@ -215,7 +219,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(500);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Failed to begin."));
         }
 
@@ -233,7 +237,8 @@ namespace TauCode.Mq.Testing.Tests
                 false,
                 false);
 
-            using IMessageSubscriber subscriber = new TestMessageSubscriber(_media, factory);
+            using var subscriber = this.CreateMessageSubscriber(factory);
+
             subscriber.Subscribe(typeof(HelloHandler));
 
             subscriber.Start();
@@ -248,7 +253,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(500);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Failed to end."));
         }
 
@@ -266,7 +271,8 @@ namespace TauCode.Mq.Testing.Tests
                 false,
                 false);
 
-            using IMessageSubscriber subscriber = new TestMessageSubscriber(_media, factory);
+            using var subscriber = this.CreateMessageSubscriber(factory);
+
             subscriber.Subscribe(typeof(HelloHandler));
 
             subscriber.Start();
@@ -278,10 +284,10 @@ namespace TauCode.Mq.Testing.Tests
                     Name = "Geki",
                 });
 
-            await Task.Delay(500);
+            await Task.Delay(200);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Failed to get service."));
         }
 
@@ -299,11 +305,12 @@ namespace TauCode.Mq.Testing.Tests
                 false,
                 false);
 
-            using IMessageSubscriber subscriber = new TestMessageSubscriber(_media, factory);
+            using var subscriber = this.CreateMessageSubscriber(factory);
+
             subscriber.Subscribe(typeof(HelloHandler));
 
             subscriber.Start();
-            
+
             // Act
             _media.Publish(
                 new HelloMessage
@@ -314,7 +321,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(500);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain($"Method 'GetService' of context '{typeof(BadContext).FullName}' returned 'null'."));
         }
 
@@ -332,7 +339,8 @@ namespace TauCode.Mq.Testing.Tests
                 true,
                 false);
 
-            using IMessageSubscriber subscriber = new TestMessageSubscriber(_media, factory);
+            using var subscriber = this.CreateMessageSubscriber(factory);
+
             subscriber.Subscribe(typeof(HelloHandler));
 
             subscriber.Start();
@@ -344,10 +352,10 @@ namespace TauCode.Mq.Testing.Tests
                     Name = "Geki",
                 });
 
-            await Task.Delay(500);
+            await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain($"Method 'GetService' of context '{typeof(BadContext).FullName}' returned wrong service of type '{typeof(ByeHandler).FullName}'."));
         }
 
@@ -359,7 +367,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeType_SingleSyncHandler_HandlesMessagesWithAndWithoutTopic()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler));
             subscriber.Subscribe(typeof(WelcomeHandler), "topic1");
@@ -370,13 +378,16 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            publisher.Publish(new HelloMessage("Lesia"), "topic1");
+            publisher.Publish(new HelloMessage("Lesia")
+            {
+                Topic = "topic1",
+            });
             publisher.Publish(new HelloMessage("Olia"));
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello sync (topic: 'topic1'), Lesia!"));
             Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
@@ -389,7 +400,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeType_MultipleSyncHandlers_HandleMessagesWithAndWithoutTopic()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler));
             subscriber.Subscribe(typeof(WelcomeHandler));
@@ -402,13 +413,16 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            publisher.Publish(new HelloMessage("Lesia"), "topic1");
+            publisher.Publish(new HelloMessage("Lesia")
+            {
+                Topic = "topic1",
+            });
             publisher.Publish(new HelloMessage("Olia"));
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello sync (topic: 'topic1'), Lesia!"));
             Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
@@ -424,7 +438,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeType_SingleAsyncHandler_HandlesMessagesWithAndWithoutTopic()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler));
             subscriber.Subscribe(typeof(WelcomeHandler), "topic1");
@@ -435,27 +449,29 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            publisher.Publish(new HelloMessage("Lesia"), "topic1");
+            publisher.Publish(new HelloMessage("Lesia")
+            {
+                Topic = "topic1",
+            });
             publisher.Publish(new HelloMessage("Olia"));
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello async (topic: 'topic1'), Lesia!"));
             Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
 
             Assert.That(log, Does.Contain("Hello async (no topic), Olia!"));
             Assert.That(log, Does.Not.Contain("Welcome sync (no topic), Olia!"));
-
         }
 
         [Test]
         public async Task SubscribeType_MultipleAsyncHandlers_HandleMessagesWithAndWithoutTopic()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler));
             subscriber.Subscribe(typeof(WelcomeAsyncHandler));
@@ -468,13 +484,16 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            publisher.Publish(new HelloMessage("Lesia"), "topic1");
+            publisher.Publish(new HelloMessage("Lesia")
+            {
+                Topic = "topic1"
+            });
             publisher.Publish(new HelloMessage("Olia"));
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello async (topic: 'topic1'), Lesia!"));
             Assert.That(log, Does.Contain("Welcome async (topic: 'topic1'), Lesia!"));
@@ -483,14 +502,13 @@ namespace TauCode.Mq.Testing.Tests
             Assert.That(log, Does.Contain("Hello async (no topic), Olia!"));
             Assert.That(log, Does.Contain("Welcome async (no topic), Olia!"));
             Assert.That(log, Does.Not.Contain("Hello sync (no topic), Olia!"));
-
         }
 
         [Test]
-        public void SubscribeType_TypeIsNull_ThrowsArgumentNullException()
+        public void SubscribeType_TypeIsNull_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentNullException>(() => subscriber.Subscribe(null));
@@ -500,10 +518,10 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_TypeIsAbstract_ThrowsArgumentException()
+        public void SubscribeType_TypeIsAbstract_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(AbstractHandler)));
@@ -514,13 +532,10 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_TypeIsNotClass_ThrowsArgumentException()
+        public void SubscribeType_TypeIsNotClass_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(StructHandler)));
@@ -533,10 +548,10 @@ namespace TauCode.Mq.Testing.Tests
         [Test]
         [TestCase(typeof(NonGenericHandler))]
         [TestCase(typeof(NotImplementingHandlerInterface))]
-        public void SubscribeType_TypeIsNotGenericSyncOrAsyncHandler_ThrowsArgumentException(Type badHandlerType)
+        public void SubscribeType_TypeIsNotGenericSyncOrAsyncHandler_ThrowsException(Type badHandlerType)
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
@@ -547,9 +562,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_TypeIsSyncAfterAsync_ThrowsMqException()
+        public void SubscribeType_TypeIsSyncAfterAsync_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             subscriber.Subscribe(typeof(HelloAsyncHandler));
@@ -560,9 +575,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_TypeIsAsyncAfterSync_ThrowsMqException()
+        public void SubscribeType_TypeIsAsyncAfterSync_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             subscriber.Subscribe(typeof(HelloHandler));
@@ -573,9 +588,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_TypeImplementsIMessageHandlerTMessageMoreThanOnce_ThrowsArgumentException()
+        public void SubscribeType_TypeImplementsIMessageHandlerTMessageMoreThanOnce_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAndByeHandler)));
@@ -586,9 +601,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_TypeImplementsIAsyncMessageHandlerTMessageMoreThanOnce_ThrowsArgumentException()
+        public void SubscribeType_TypeImplementsIAsyncMessageHandlerTMessageMoreThanOnce_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAndByeAsyncHandler)));
@@ -599,9 +614,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_TypeImplementsBothSyncAndAsync_ThrowsArgumentException()
+        public void SubscribeType_TypeImplementsBothSyncAndAsync_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(BothSyncAndAsyncHandler)));
@@ -612,9 +627,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_SyncTypeAlreadySubscribed_ThrowsMqException()
+        public void SubscribeType_SyncTypeAlreadySubscribed_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler));
 
@@ -626,9 +641,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_AsyncTypeAlreadySubscribed_ThrowsMqException()
+        public void SubscribeType_AsyncTypeAlreadySubscribed_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler));
 
@@ -642,13 +657,10 @@ namespace TauCode.Mq.Testing.Tests
         [Test]
         [TestCase(typeof(AbstractMessageHandler))]
         [TestCase(typeof(AbstractMessageAsyncHandler))]
-        public void SubscribeType_TMessageIsAbstract_ThrowsArgumentException(Type badHandlerType)
+        public void SubscribeType_TMessageIsAbstract_ThrowsException(Type badHandlerType)
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
@@ -661,10 +673,10 @@ namespace TauCode.Mq.Testing.Tests
         [Test]
         [TestCase(typeof(StructMessageHandler))]
         [TestCase(typeof(StructMessageAsyncHandler))]
-        public void SubscribeType_TMessageIsNotClass_ThrowsArgumentException(Type badHandlerType)
+        public void SubscribeType_TMessageIsNotClass_ThrowsException(Type badHandlerType)
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
@@ -678,7 +690,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeType_TMessageCtorThrows_LogsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             var message = new DecayingMessage
             {
@@ -695,7 +707,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Alas Ctor Decayed!"));
         }
 
@@ -703,12 +715,8 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeType_TMessagePropertyThrows_LogsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-            
             var message = new DecayingMessage
             {
                 DecayedProperty = "fresh",
@@ -718,13 +726,13 @@ namespace TauCode.Mq.Testing.Tests
 
             subscriber.Subscribe(typeof(DecayingMessageHandler));
             subscriber.Start();
-            
+
             // Act
             _media.Publish(message);
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Alas Property Decayed!"));
         }
 
@@ -732,7 +740,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeType_SyncHandlerHandleThrows_LogsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             var message = new HelloMessage
             {
@@ -750,7 +758,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Hello sync (no topic), Big Fish!"));
             Assert.That(log, Does.Contain("I hate you sync (no topic), 'Big Fish'! Exception thrown!"));
             Assert.That(log, Does.Contain("Welcome sync (no topic), Big Fish!"));
@@ -764,12 +772,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeType_AsyncHandlerHandleAsyncThrows_LogsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
-
-            
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             var message = new HelloMessage
             {
@@ -787,7 +790,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Hello async (no topic), Big Fish!"));
             Assert.That(log, Does.Contain("I hate you async (no topic), 'Big Fish'! Exception thrown!"));
             Assert.That(log, Does.Contain("Welcome async (no topic), Big Fish!"));
@@ -797,10 +800,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeType_AsyncHandlerCanceledOrFaulted_RestDoRun()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler)); // #0 will say 'hello'
             subscriber.Subscribe(typeof(CancelingHelloAsyncHandler)); // #1 will cancel with message
@@ -815,7 +815,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(200);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello async (no topic), Ira!")); // #0
             Assert.That(log, Does.Contain("Sorry, I am cancelling async (no topic), Ira...")); // #1
@@ -824,32 +824,26 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeType_Started_ThrowsInappropriateWorkerStateException()
+        public void SubscribeType_Started_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("my-subscriber");
 
             subscriber.Subscribe(typeof(HelloAsyncHandler));
 
             // Act
             subscriber.Start();
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => subscriber.Subscribe(typeof(WelcomeAsyncHandler)));
+            var ex = Assert.Throws<InvalidOperationException>(() => subscriber.Subscribe(typeof(WelcomeAsyncHandler)));
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Running)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Subscribe'. Worker state is 'Running'. Worker name is 'my-subscriber'."));
         }
 
         [Test]
-        public void SubscribeType_Disposed_ThrowsObjectDisposedException()
+        public void SubscribeType_Disposed_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("my-subscriber");
 
             subscriber.Subscribe(typeof(HelloAsyncHandler));
 
@@ -868,11 +862,7 @@ namespace TauCode.Mq.Testing.Tests
         [Test]
         public async Task SubscribeTypeString_SingleSyncHandler_HandlesMessagesWithProperTopic()
         {
-            // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler), "topic1");
             subscriber.Subscribe(typeof(HelloHandler), "topic2");
@@ -883,13 +873,16 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            var message = new HelloMessage("Lesia");
-            publisher.Publish(message, "topic2");
+            var message = new HelloMessage("Lesia")
+            {
+                Topic = "topic2",
+            };
+            publisher.Publish(message);
 
-            await Task.Delay(300);
+            await Task.Delay(1300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello sync (topic: 'topic2'), Lesia!"));
 
@@ -900,10 +893,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_MultipleSyncHandlers_HandleMessagesWithProperTopic()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler), "topic1");
 
@@ -916,14 +906,17 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            var message = new HelloMessage("Lesia");
-            publisher.Publish(message, "topic2");
+            var message = new HelloMessage("Lesia")
+            {
+                Topic = "topic2",
+            };
+            publisher.Publish(message);
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
-            
+            var log = this.CurrentLog;
+
             Assert.That(log, Does.Contain("Hello sync (topic: 'topic2'), Lesia!"));
             Assert.That(log, Does.Contain("Welcome sync (topic: 'topic2'), Lesia!"));
 
@@ -934,8 +927,8 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_SingleAsyncHandler_HandlesMessagesWithProperTopic()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
-            
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+
             subscriber.Subscribe(typeof(HelloAsyncHandler), "topic1");
             subscriber.Subscribe(typeof(HelloAsyncHandler), "topic2");
 
@@ -945,13 +938,16 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            var message = new HelloMessage("Lesia");
-            publisher.Publish(message, "topic2");
+            var message = new HelloMessage("Lesia")
+            {
+                Topic = "topic2",
+            };
+            publisher.Publish(message);
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello async (topic: 'topic2'), Lesia!"));
 
@@ -962,10 +958,9 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_MultipleAsyncHandlers_HandleMessagesWithProperTopic()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler), "topic1");
-
             subscriber.Subscribe(typeof(WelcomeAsyncHandler), "topic2");
             subscriber.Subscribe(typeof(HelloAsyncHandler), "topic2");
 
@@ -975,13 +970,16 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            var message = new HelloMessage("Lesia");
-            publisher.Publish(message, "topic2");
+            var message = new HelloMessage("Lesia")
+            {
+                Topic = "topic2",
+            };
+            publisher.Publish(message);
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello async (topic: 'topic2'), Lesia!"));
             Assert.That(log, Does.Contain("Welcome async (topic: 'topic2'), Lesia!"));
@@ -992,9 +990,9 @@ namespace TauCode.Mq.Testing.Tests
         [Test]
         [TestCase(null)]
         [TestCase("")]
-        public void SubscribeTypeString_TopicIsNullOrEmpty_ThrowsArgumentException(string badTopic)
+        public void SubscribeTypeString_TopicIsNullOrEmpty_ThrowsException(string badTopic)
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloHandler), badTopic));
@@ -1005,9 +1003,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeTypeString_TypeIsNull_ThrowsArgumentNullException()
+        public void SubscribeTypeString_TypeIsNull_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentNullException>(() => subscriber.Subscribe(null, "some-topic"));
@@ -1017,10 +1015,10 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeTypeString_TypeIsAbstract_ThrowsArgumentException()
+        public void SubscribeTypeString_TypeIsAbstract_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(AbstractHandler), "my-topic"));
@@ -1031,10 +1029,10 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeTypeString_TypeIsNotClass_ThrowsArgumentException()
+        public void SubscribeTypeString_TypeIsNotClass_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(StructHandler), "my-topic"));
@@ -1047,10 +1045,10 @@ namespace TauCode.Mq.Testing.Tests
         [Test]
         [TestCase(typeof(NonGenericHandler))]
         [TestCase(typeof(NotImplementingHandlerInterface))]
-        public void SubscribeTypeString_TypeIsNotGenericSyncOrAsyncHandler_ThrowsArgumentException(Type badHandlerType)
+        public void SubscribeTypeString_TypeIsNotGenericSyncOrAsyncHandler_ThrowsException(Type badHandlerType)
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
@@ -1061,9 +1059,9 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeTypeString_TypeIsSyncAfterAsyncSameTopic_ThrowsMqException()
+        public void SubscribeTypeString_TypeIsSyncAfterAsyncSameTopic_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
@@ -1078,7 +1076,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_TypeIsSyncAfterAsyncButThatAsyncHasDifferentTopic_RunsOk()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
@@ -1089,12 +1087,15 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Subscribe(typeof(HelloHandler), "another-topic");
             subscriber.Start();
 
-            publisher.Publish(new HelloMessage("Nika"), "another-topic");
+            publisher.Publish(new HelloMessage("Nika")
+            {
+                Topic = "another-topic",
+            });
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
             Assert.That(log, Does.Not.Contain("Hello async (topic: 'another-topic'), Nika!"));
@@ -1104,7 +1105,8 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_TypeIsSyncAfterAsyncButThatAsyncIsTopicless_RunsOk()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+
             subscriber.Subscribe(typeof(HelloAsyncHandler));
 
             using var publisher = new TestMessagePublisher(_media);
@@ -1114,25 +1116,25 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Subscribe(typeof(HelloHandler), "another-topic");
             subscriber.Start();
 
-            publisher.Publish(new HelloMessage("Nika"), "another-topic");
+            publisher.Publish(new HelloMessage("Nika")
+            {
+                Topic = "another-topic",
+            });
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
             Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
         }
 
         [Test]
-        public void SubscribeTypeString_TypeIsAsyncAfterSyncSameTopic_ThrowsMqException()
+        public void SubscribeTypeString_TypeIsAsyncAfterSyncSameTopic_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler), "some-topic");
 
@@ -1147,10 +1149,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_TypeIsAsyncAfterSyncButThatSyncHasDifferentTopic_RunsOk()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler), "some-topic");
 
@@ -1161,12 +1160,15 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Subscribe(typeof(HelloAsyncHandler), "another-topic");
             subscriber.Start();
 
-            publisher.Publish(new HelloMessage("Nika"), "another-topic");
+            publisher.Publish(new HelloMessage("Nika")
+            {
+                Topic = "another-topic",
+            });
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
             Assert.That(log, Does.Not.Contain("Hello sync (topic: 'another-topic'), Nika!"));
@@ -1176,10 +1178,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_TypeIsAsyncAfterSyncButThatSyncIsTopicless_RunsOk()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler));
 
@@ -1190,25 +1189,25 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Subscribe(typeof(HelloAsyncHandler), "another-topic");
             subscriber.Start();
 
-            publisher.Publish(new HelloMessage("Nika"), "another-topic");
+            publisher.Publish(new HelloMessage("Nika")
+            {
+                Topic = "another-topic",
+            });
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
             Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
         }
 
         [Test]
-        public void SubscribeTypeString_TypeImplementsIMessageHandlerTMessageMoreThanOnce_ThrowsArgumentException()
+        public void SubscribeTypeString_TypeImplementsIMessageHandlerTMessageMoreThanOnce_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAndByeHandler), "some-topic"));
@@ -1219,13 +1218,10 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeTypeString_TypeImplementsIAsyncMessageHandlerTMessageMoreThanOnce_ThrowsArgumentException()
+        public void SubscribeTypeString_TypeImplementsIAsyncMessageHandlerTMessageMoreThanOnce_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAndByeAsyncHandler), "some-topic"));
@@ -1236,13 +1232,10 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeTypeString_TypeImplementsBothSyncAndAsync_ThrowsArgumentException()
+        public void SubscribeTypeString_TypeImplementsBothSyncAndAsync_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(BothSyncAndAsyncHandler), "some-topic"));
@@ -1254,12 +1247,10 @@ namespace TauCode.Mq.Testing.Tests
 
 
         [Test]
-        public void SubscribeTypeString_SyncTypeAlreadySubscribedToTheSameTopic_ThrowsMqException()
+        public void SubscribeTypeString_SyncTypeAlreadySubscribedToTheSameTopic_ThrowsException()
         {
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            // Arrange
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler), "some-topic");
 
@@ -1274,7 +1265,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_SyncTypeAlreadySubscribedButToDifferentTopic_RunsOk()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler), "some-topic");
 
@@ -1285,12 +1276,15 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Subscribe(typeof(HelloHandler), "another-topic");
             subscriber.Start();
 
-            publisher.Publish(new HelloMessage("Alina"), "another-topic");
+            publisher.Publish(new HelloMessage("Alina")
+            {
+                Topic = "another-topic",
+            });
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Alina!"));
             Assert.That(log, Does.Not.Contain("Hello sync (topic: 'some-topic'), Alina!"));
         }
@@ -1299,7 +1293,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_SyncTypeAlreadySubscribedButWithoutTopic_RunsOk()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler)); // without topic
 
@@ -1311,23 +1305,26 @@ namespace TauCode.Mq.Testing.Tests
 
             subscriber.Start();
 
-            var message = new HelloMessage("Marina");
-            publisher.Publish(message, "some-topic");
+            var message = new HelloMessage("Marina")
+            {
+                Topic = "some-topic",
+            };
+            publisher.Publish(message);
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello sync (topic: 'some-topic'), Marina!"));
             Assert.That(log, Does.Contain("Hello async (topic: 'some-topic'), Marina!"));
         }
 
         [Test]
-        public void SubscribeTypeString_AsyncTypeAlreadySubscribedToTheSameTopic_ThrowsMqException()
+        public void SubscribeTypeString_AsyncTypeAlreadySubscribedToTheSameTopic_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
@@ -1342,7 +1339,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_AsyncTypeAlreadySubscribedButToDifferentTopic_SubscribesOk()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
@@ -1353,12 +1350,15 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Subscribe(typeof(HelloAsyncHandler), "another-topic");
             subscriber.Start();
 
-            publisher.Publish(new HelloMessage("Alina"), "another-topic");
+            publisher.Publish(new HelloMessage("Alina")
+            {
+                Topic = "another-topic",
+            });
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Alina!"));
             Assert.That(log, Does.Not.Contain("Hello async (topic: 'some-topic'), Alina!"));
         }
@@ -1367,7 +1367,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_AsyncTypeAlreadySubscribedButWithoutTopic_SubscribesOk()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler)); // without topic
 
@@ -1378,12 +1378,15 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Subscribe(typeof(HelloHandler), "another-topic");
             subscriber.Start();
 
-            publisher.Publish(new HelloMessage("Alina"), "another-topic");
+            publisher.Publish(new HelloMessage("Alina")
+            {
+                Topic = "another-topic",
+            });
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Alina!"));
             Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Alina!"));
         }
@@ -1391,13 +1394,10 @@ namespace TauCode.Mq.Testing.Tests
         [Test]
         [TestCase(typeof(AbstractMessageHandler))]
         [TestCase(typeof(AbstractMessageAsyncHandler))]
-        public void SubscribeTypeString_TMessageIsAbstract_ThrowsArgumentException(Type badHandlerType)
+        public void SubscribeTypeString_TMessageIsAbstract_ThrowsException(Type badHandlerType)
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType, "some-topic"));
@@ -1410,10 +1410,10 @@ namespace TauCode.Mq.Testing.Tests
         [Test]
         [TestCase(typeof(StructMessageHandler))]
         [TestCase(typeof(StructMessageAsyncHandler))]
-        public void SubscribeTypeString_TMessageIsNotClass_ThrowsArgumentException(Type badHandlerType)
+        public void SubscribeTypeString_TMessageIsNotClass_ThrowsException(Type badHandlerType)
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType), "some-topic");
@@ -1425,10 +1425,9 @@ namespace TauCode.Mq.Testing.Tests
 
         [Test]
         public async Task SubscribeTypeString_TMessageCtorThrows_LogsException()
-
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             using var publisher = new TestMessagePublisher(_media);
             publisher.Start();
@@ -1436,6 +1435,7 @@ namespace TauCode.Mq.Testing.Tests
             var message = new DecayingMessage
             {
                 DecayedProperty = "fresh",
+                Topic = "some-topic",
             };
 
             DecayingMessage.IsCtorDecayed = true;
@@ -1444,11 +1444,11 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Start();
 
             // Act
-            publisher.Publish(message, "some-topic");
+            publisher.Publish(message);
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Alas Ctor Decayed!"));
         }
 
@@ -1456,12 +1456,12 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_TMessagePropertyThrows_LogsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-            
             var message = new DecayingMessage
             {
                 DecayedProperty = "fresh",
+                Topic = "some-topic",
             };
 
             DecayingMessage.IsPropertyDecayed = true;
@@ -1470,23 +1470,22 @@ namespace TauCode.Mq.Testing.Tests
             subscriber.Start();
 
             // Act
-            _media.Publish(message, "some-topic");
+            _media.Publish(message);
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Alas Property Decayed!"));
         }
 
 
         // todo: review ut-s of entire 'Bundle.Handle', 'Bundle.AsyncHandle' loops. If an exception was thrown at any step, we must give the chance to other handlers. 
-        // todo: they are not guilty that one of them failed.
 
         [Test]
         public async Task SubscribeTypeString_SyncHandlerThrows_RestDoRun()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler), "some-topic"); // #0 will handle
             subscriber.Subscribe(typeof(FishHaterHandler), "some-topic"); // #1 will fail
@@ -1497,21 +1496,24 @@ namespace TauCode.Mq.Testing.Tests
             using var publisher = new TestMessagePublisher(_media);
             publisher.Start();
 
-            var message = new HelloMessage("Small Fish");
+            var message = new HelloMessage("Small Fish")
+            {
+                Topic = "some-topic",
+            };
 
             // Act
-            publisher.Publish(message, "some-topic");
+            publisher.Publish(message);
 
             await Task.Delay(300);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Hello sync (topic: 'some-topic'), Small Fish!"));
             Assert.That(log, Does.Contain("I hate you sync (topic: 'some-topic'), 'Small Fish'! Exception thrown!"));
             Assert.That(log, Does.Contain("Welcome sync (topic: 'some-topic'), Small Fish!"));
         }
 
-        // todo: when topic is present, topicless subscription does not fire (sync or async)
+        // todo: when topic is present, topicless subscription does not fire (sync or async) - [2021-03-31] Is it so? I think now that vice versa
 
 
         // todo - async handler's HandleAsync is faulted => logs, stops loop gracefully.
@@ -1519,10 +1521,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_AsyncHandlerFaulted_LogsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(FaultingHelloAsyncHandler), "some-topic");
             subscriber.Start();
@@ -1531,12 +1530,15 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            publisher.Publish(new HelloMessage("Ania"), "some-topic");
+            publisher.Publish(new HelloMessage("Ania")
+            {
+                Topic = "some-topic",
+            });
 
-            await Task.Delay(300);
+            await Task.Delay(500);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain("Sorry, I am faulting async (topic: 'some-topic'), Ania..."));
             Assert.That(log, Does.Not.Contain("Context ended."));
         }
@@ -1547,10 +1549,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task SubscribeTypeString_AsyncHandlerCanceledOrFaulted_RestDoRun()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic"); // #0 will say 'hello'
             subscriber.Subscribe(typeof(CancelingHelloAsyncHandler), "some-topic"); // #1 will cancel with message
@@ -1563,12 +1562,15 @@ namespace TauCode.Mq.Testing.Tests
             publisher.Start();
 
             // Act
-            publisher.Publish(new HelloMessage("Ira"), "some-topic");
+            publisher.Publish(new HelloMessage("Ira")
+            {
+                Topic = "some-topic",
+            });
 
-            await Task.Delay(200);
+            await Task.Delay(500);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello async (topic: 'some-topic'), Ira!")); // #0
             Assert.That(log, Does.Contain("Sorry, I am cancelling async (topic: 'some-topic'), Ira...")); // #1
@@ -1577,33 +1579,27 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void SubscribeTypeString_Started_ThrowsInappropriateWorkerStateException()
+        public void SubscribeTypeString_Started_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("my-subscriber");
 
             subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
             // Act
             subscriber.Start();
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => subscriber.Subscribe(typeof(WelcomeAsyncHandler), "some-topic"));
+            var ex = Assert.Throws<InvalidOperationException>(() => subscriber.Subscribe(typeof(WelcomeAsyncHandler), "some-topic"));
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Running)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Subscribe'. Worker state is 'Running'. Worker name is 'my-subscriber'."));
 
         }
 
         [Test]
-        public void SubscribeTypeString_Disposed_ThrowsObjectDisposedException()
+        public void SubscribeTypeString_Disposed_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("my-subscriber");
 
             subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
@@ -1623,10 +1619,7 @@ namespace TauCode.Mq.Testing.Tests
         public void GetSubscriptions_JustCreated_ReturnsEmptyArray()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             var subscriptions = subscriber.GetSubscriptions();
@@ -1639,10 +1632,7 @@ namespace TauCode.Mq.Testing.Tests
         public void GetSubscriptions_Running_ReturnsSubscriptions()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler));
             subscriber.Subscribe(typeof(WelcomeHandler));
@@ -1676,10 +1666,7 @@ namespace TauCode.Mq.Testing.Tests
         public void GetSubscriptions_Stopped_ReturnsSubscriptions()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler));
             subscriber.Subscribe(typeof(WelcomeHandler));
@@ -1714,10 +1701,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task GetSubscriptions_Disposed_ReturnsEmptyArray()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Subscribe(typeof(HelloHandler));
             subscriber.Subscribe(typeof(WelcomeHandler));
@@ -1742,10 +1726,7 @@ namespace TauCode.Mq.Testing.Tests
         public void Name_NotDisposed_IsChangedAndCanBeRead()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub_created"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub_created");
 
             // Act
             var nameCreated = subscriber.Name;
@@ -1770,10 +1751,7 @@ namespace TauCode.Mq.Testing.Tests
         public void Name_Disposed_CanOnlyBeRead()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "name1",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("name1");
 
             // Act
             subscriber.Dispose();
@@ -1797,10 +1775,7 @@ namespace TauCode.Mq.Testing.Tests
             // Arrange
 
             // Act
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Assert
             Assert.That(subscriber.State, Is.EqualTo(WorkerState.Stopped));
@@ -1810,7 +1785,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_Started_EqualsToStarted()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             subscriber.Start();
@@ -1823,7 +1798,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_Stopped_EqualsToStopped()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Start();
 
@@ -1838,11 +1813,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_DisposedJustAfterCreation_EqualsToStopped()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
-
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             subscriber.Dispose();
@@ -1855,7 +1826,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_DisposedAfterStarted_EqualsToStopped()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Start();
 
@@ -1870,7 +1841,7 @@ namespace TauCode.Mq.Testing.Tests
         public void State_DisposedAfterStopped_EqualsToStopped()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             subscriber.Start();
             subscriber.Stop();
@@ -1886,10 +1857,8 @@ namespace TauCode.Mq.Testing.Tests
         public void State_DisposedAfterDisposed_EqualsToStopped()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+
             subscriber.Start();
             subscriber.Stop();
             subscriber.Dispose();
@@ -1911,10 +1880,7 @@ namespace TauCode.Mq.Testing.Tests
             // Arrange
 
             // Act
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             // Assert
             Assert.That(subscriber.IsDisposed, Is.False);
@@ -1924,10 +1890,7 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_Started_EqualsToFalse()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             // Act
             subscriber.Start();
@@ -1940,10 +1903,7 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_Stopped_EqualsToFalse()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             subscriber.Start();
 
@@ -1958,10 +1918,7 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_DisposedJustAfterCreation_EqualsToTrue()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             // Act
             subscriber.Dispose();
@@ -1974,10 +1931,8 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_DisposedAfterStarted_EqualsToTrue()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
+
             subscriber.Start();
 
             // Act
@@ -1991,10 +1946,8 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_DisposedAfterStopped_EqualsToTrue()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
+
             subscriber.Start();
             subscriber.Stop();
 
@@ -2009,10 +1962,8 @@ namespace TauCode.Mq.Testing.Tests
         public void IsDisposed_DisposedAfterDisposed_EqualsToTrue()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
+
             subscriber.Dispose();
 
             // Act
@@ -2030,10 +1981,7 @@ namespace TauCode.Mq.Testing.Tests
         public async Task Start_JustCreated_StartsAndHandlesMessages()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             subscriber.Subscribe(typeof(HelloHandler));
             subscriber.Subscribe(typeof(WelcomeHandler));
@@ -2043,8 +1991,6 @@ namespace TauCode.Mq.Testing.Tests
 
             subscriber.Start();
 
-            
-
             // Act
             _media.Publish(new HelloMessage("Ira"));
             _media.Publish(new ByeMessage("Olia"));
@@ -2052,7 +1998,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(200);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello sync (no topic), Ira!"));
             Assert.That(log, Does.Contain("Welcome sync (no topic), Ira!"));
@@ -2062,31 +2008,25 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void Start_Started_ThrowsInappropriateWorkerStateException()
+        public void Start_Started_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("my-subscriber");
 
             subscriber.Start();
 
             // Act
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => subscriber.Start());
+            var ex = Assert.Throws<InvalidOperationException>(() => subscriber.Start());
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Running)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Start'. Worker state is 'Running'. Worker name is 'my-subscriber'."));
         }
 
         [Test]
         public async Task Start_Stopped_StartsAndHandlesMessages()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             subscriber.Subscribe(typeof(HelloHandler));
             subscriber.Subscribe(typeof(WelcomeHandler));
@@ -2113,7 +2053,7 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(200);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
 
             Assert.That(log, Does.Contain("Hello sync (no topic), Manuela!"));
             Assert.That(log, Does.Contain("Welcome sync (no topic), Manuela!"));
@@ -2123,13 +2063,11 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void Start_Disposed_ThrowsObjectDisposedException()
+        public void Start_Disposed_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("my-subscriber");
+
             subscriber.Dispose();
 
             // Act
@@ -2144,33 +2082,27 @@ namespace TauCode.Mq.Testing.Tests
         #region Stop()
 
         [Test]
-        public void Stop_JustCreated_ThrowsInappropriateWorkerStateException()
+        public void Stop_JustCreated_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             // Act
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => subscriber.Stop());
+            var ex = Assert.Throws<InvalidOperationException>(() => subscriber.Stop());
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Stopped)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Stop'. Worker state is 'Stopped'. Worker name is 'sub'."));
         }
 
         [Test]
         public async Task Stop_Started_StopsAndCancelsCurrentAsyncTasks()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+
             subscriber.Subscribe(typeof(HelloAsyncHandler));
             subscriber.Start();
 
-            
             _media.Publish(new HelloMessage()
             {
                 Name = "Koika",
@@ -2178,44 +2110,38 @@ namespace TauCode.Mq.Testing.Tests
             });
 
             // Act
-            await Task.Delay(200); // let 'HelloAsyncHandler' start.
+            await Task.Delay(500); // let 'HelloAsyncHandler' start.
 
             subscriber.Stop(); // should cancel 'HelloAsyncHandler'
 
             await Task.Delay(100);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain($"A task was canceled."));
         }
 
         [Test]
-        public void Stop_Stopped_ThrowsInappropriateWorkerStateException()
+        public void Stop_Stopped_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             subscriber.Start();
             subscriber.Stop();
 
             // Act
-            var ex = Assert.Throws<InappropriateWorkerStateException>(() => subscriber.Stop());
+            var ex = Assert.Throws<InvalidOperationException>(() => subscriber.Stop());
 
             // Assert
-            Assert.That(ex, Has.Message.EqualTo("Inappropriate worker state (Stopped)."));
+            Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Stop'. Worker state is 'Stopped'. Worker name is 'sub'."));
         }
 
         [Test]
-        public void Stop_Disposed_ThrowsObjectDisposedException()
+        public void Stop_Disposed_ThrowsException()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "sub",
-            };
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
             subscriber.Dispose();
 
@@ -2234,11 +2160,7 @@ namespace TauCode.Mq.Testing.Tests
         public void Dispose_JustCreated_Disposes()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory())
-            {
-                Name = "my-subscriber"
-            };
-
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
             // Act
             subscriber.Dispose();
@@ -2251,12 +2173,12 @@ namespace TauCode.Mq.Testing.Tests
         public async Task Dispose_Started_DisposesAndCancelsCurrentAsyncTasks()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+            subscriber.Logger = _logger;
 
             subscriber.Subscribe(typeof(HelloAsyncHandler));
             subscriber.Start();
 
-            
             _media.Publish(new HelloMessage()
             {
                 Name = "Koika",
@@ -2271,15 +2193,15 @@ namespace TauCode.Mq.Testing.Tests
             await Task.Delay(100);
 
             // Assert
-            var log = this.GetLog();
+            var log = this.CurrentLog;
             Assert.That(log, Does.Contain($"A task was canceled."));
         }
 
         [Test]
-        public void Disposes_Stopped_Disposes()
+        public void Dispose_Stopped_Disposes()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
             subscriber.Start();
             subscriber.Stop();
 
@@ -2291,10 +2213,10 @@ namespace TauCode.Mq.Testing.Tests
         }
 
         [Test]
-        public void Disposes_Disposed_DoesNothing()
+        public void Dispose_Disposed_DoesNothing()
         {
             // Arrange
-            using var subscriber = new TestMessageSubscriber(_media, new GoodContextFactory());
+            using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
             subscriber.Dispose();
 
             // Act

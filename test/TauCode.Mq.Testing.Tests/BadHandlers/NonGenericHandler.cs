@@ -5,7 +5,7 @@ namespace TauCode.Mq.Testing.Tests.BadHandlers
 {
     public class NonGenericHandler : IMessageHandler
     {
-        public void Handle(object message)
+        public void Handle(IMessage message)
         {
             throw new NotSupportedException();
         }
