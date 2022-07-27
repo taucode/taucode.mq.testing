@@ -1,36 +1,89 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace TauCode.Mq.Testing
 {
     public class TestMessageSubscriber : MessageSubscriberBase
     {
-        public TestMessageSubscriber(TestMessageMedia media, IMessageHandlerContextFactory contextFactory)
+        #region Fields
+
+        private readonly ITestMqMedia _media;
+
+        #endregion
+
+        #region Constructor
+
+        public TestMessageSubscriber(ITestMqMedia media, IMessageHandlerContextFactory contextFactory)
             : base(contextFactory)
         {
-            this.Media = media ?? throw new ArgumentNullException(nameof(media));
+            _media = media ?? throw new ArgumentNullException(nameof(media));
         }
 
-        public TestMessageMedia Media { get; }
+        #endregion
 
-        protected override void SubscribeImpl(IEnumerable<ISubscriptionRequest> requests)
+        #region Overridden
+        
+        protected override void InitImpl()
         {
-            foreach (var request in requests)
+            // idle
+        }
+
+        protected override void ShutdownImpl()
+        {
+        }
+
+        protected override IDisposable SubscribeImpl(ISubscriptionRequest subscriptionRequest)
+        {
+            if (subscriptionRequest.AsyncHandler != null && subscriptionRequest.Handler == null)
             {
-                if (request.Topic == null)
+                // got async subscription
+                if (subscriptionRequest.Topic == null)
                 {
-                    this.Media.Subscribe(request.MessageType, request.Handler);
+                    return _media.Subscribe(
+                        subscriptionRequest.MessageType,
+                        subscriptionRequest.AsyncHandler);
                 }
                 else
                 {
-                    this.Media.Subscribe(request.MessageType, request.Handler, request.Topic);
+                    return _media.Subscribe(
+                        subscriptionRequest.MessageType,
+                        subscriptionRequest.AsyncHandler,
+                        subscriptionRequest.Topic);
                 }
+            }
+            else if (subscriptionRequest.Handler != null && subscriptionRequest.AsyncHandler == null)
+            {
+                // got sync subscription
+                if (subscriptionRequest.Topic == null)
+                {
+                    return _media.Subscribe(
+                        subscriptionRequest.MessageType,
+                        obj =>
+                        {
+                            subscriptionRequest.Handler(obj);
+                            return Task.CompletedTask;
+                        });
+                }
+                else
+                {
+                    return _media.Subscribe(
+                        subscriptionRequest.MessageType,
+                        obj =>
+                        {
+                            subscriptionRequest.Handler(obj);
+                            return Task.CompletedTask;
+                        },
+                        subscriptionRequest.Topic);
+                }
+            }
+            else
+            {
+                throw new ArgumentException(
+                    $"'{nameof(subscriptionRequest)}' is invalid.",
+                    nameof(subscriptionRequest));
             }
         }
 
-        protected override void UnsubscribeImpl()
-        {
-            // todo: refactor test media for unsubscription.
-        }
+        #endregion
     }
 }
