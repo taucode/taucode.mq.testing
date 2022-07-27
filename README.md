@@ -1,2 +1,2 @@
 # taucode.mq.testing
-MQ testing support library
+TauCode MQ testing support library
