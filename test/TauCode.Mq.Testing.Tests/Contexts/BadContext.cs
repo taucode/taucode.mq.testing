@@ -1,85 +1,83 @@
-﻿using System;
-using TauCode.Mq.Testing.Tests.Handlers.Bye.Sync;
+﻿using TauCode.Mq.Testing.Tests.Handlers.Bye.Sync;
 using TauCode.Mq.Testing.Tests.Handlers.Hello.Sync;
 
-namespace TauCode.Mq.Testing.Tests.Contexts
+namespace TauCode.Mq.Testing.Tests.Contexts;
+
+public class BadContext : IMessageHandlerContext
 {
-    public class BadContext : IMessageHandlerContext
+    private readonly bool _throwOnBegin;
+    private readonly bool _throwOnEnd;
+
+    private readonly bool _throwOnGetService;
+    private readonly bool _returnNullOnGetService;
+    private readonly bool _returnsWrongService;
+
+    private readonly bool _throwOnDispose;
+
+    public BadContext(
+        bool throwOnBegin,
+        bool throwOnEnd,
+        bool throwOnGetService,
+        bool returnNullOnGetService,
+        bool returnsWrongService,
+        bool throwOnDispose)
     {
-        private readonly bool _throwOnBegin;
-        private readonly bool _throwOnEnd;
+        _throwOnBegin = throwOnBegin;
+        _throwOnEnd = throwOnEnd;
 
-        private readonly bool _throwOnGetService;
-        private readonly bool _returnNullOnGetService;
-        private readonly bool _returnsWrongService;
+        _throwOnGetService = throwOnGetService;
+        _returnNullOnGetService = returnNullOnGetService;
+        _returnsWrongService = returnsWrongService;
 
-        private readonly bool _throwOnDispose;
+        _throwOnDispose = throwOnDispose;
+    }
 
-        public BadContext(
-            bool throwOnBegin,
-            bool throwOnEnd,
-            bool throwOnGetService,
-            bool returnNullOnGetService,
-            bool returnsWrongService,
-            bool throwOnDispose)
+    public void Begin()
+    {
+        if (_throwOnBegin)
         {
-            _throwOnBegin = throwOnBegin;
-            _throwOnEnd = throwOnEnd;
+            throw new NotSupportedException("Failed to begin.");
+        }
+    }
 
-            _throwOnGetService = throwOnGetService;
-            _returnNullOnGetService = returnNullOnGetService;
-            _returnsWrongService = returnsWrongService;
-
-            _throwOnDispose = throwOnDispose;
+    public object GetService(Type serviceType)
+    {
+        if (_throwOnGetService)
+        {
+            throw new NotSupportedException("Failed to get service.");
         }
 
-        public void Begin()
+        if (_returnNullOnGetService)
         {
-            if (_throwOnBegin)
-            {
-                throw new NotSupportedException("Failed to begin.");
-            }
+            return null;
         }
 
-        public object GetService(Type serviceType)
+        if (serviceType == typeof(HelloHandler))
         {
-            if (_throwOnGetService)
+            if (_returnsWrongService)
             {
-                throw new NotSupportedException("Failed to get service.");
+                return new ByeHandler();
             }
 
-            if (_returnNullOnGetService)
-            {
-                return null;
-            }
-
-            if (serviceType == typeof(HelloHandler))
-            {
-                if (_returnsWrongService)
-                {
-                    return new ByeHandler();
-                }
-
-                return new HelloHandler();
-            }
-
-            throw new NotSupportedException($"Service of type '{serviceType.FullName}' not supported.");
+            return new HelloHandler();
         }
 
-        public void End()
-        {
-            if (_throwOnEnd)
-            {
-                throw new NotSupportedException("Failed to end.");
-            }
-        }
+        throw new NotSupportedException($"Service of type '{serviceType.FullName}' not supported.");
+    }
 
-        public void Dispose()
+    public void End()
+    {
+        if (_throwOnEnd)
         {
-            if (_throwOnDispose)
-            {
-                throw new NotSupportedException("Failed to dispose.");
-            }
+            throw new NotSupportedException("Failed to end.");
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_throwOnDispose)
+        {
+            throw new NotSupportedException("Failed to dispose.");
         }
     }
 }
