@@ -1,9 +1,7 @@
-﻿using TauCode.Mq.Abstractions;
-using TauCode.Mq.Testing.Tests.Messages;
+﻿using TauCode.Mq.Testing.Tests.Messages;
 
-namespace TauCode.Mq.Testing.Tests.BadHandlers
+namespace TauCode.Mq.Testing.Tests.BadHandlers;
+
+public abstract class AbstractHandler : MessageHandlerBase<HelloMessage>
 {
-    public abstract class AbstractHandler : MessageHandlerBase<HelloMessage>
-    {
-    }
 }

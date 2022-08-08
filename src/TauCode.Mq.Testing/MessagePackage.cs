@@ -1,21 +1,18 @@
-﻿using System;
+﻿namespace TauCode.Mq.Testing;
 
-namespace TauCode.Mq.Testing
+internal class MessagePackage
 {
-    internal class MessagePackage
+    internal MessagePackage(
+        Type messageType,
+        string messageJson,
+        string topic)
     {
-        internal MessagePackage(
-            Type messageType,
-            string messageJson,
-            string topic)
-        {
-            this.MessageType = messageType;
-            this.MessageJson = messageJson;
-            this.Topic = topic;
-        }
-
-        internal Type MessageType { get; }
-        internal string MessageJson { get; }
-        internal string Topic { get; }
+        this.MessageType = messageType;
+        this.MessageJson = messageJson;
+        this.Topic = topic;
     }
+
+    internal Type MessageType { get; }
+    internal string MessageJson { get; }
+    internal string Topic { get; }
 }
