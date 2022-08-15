@@ -1,4 +1,5 @@
-﻿using TauCode.Working;
+﻿using Serilog;
+using TauCode.Working;
 
 namespace TauCode.Mq.Testing;
 
@@ -6,7 +7,8 @@ internal class MessageQueue : QueueWorkerBase<MessagePackage>
 {
     private readonly TestMqMedia _media;
 
-    internal MessageQueue(TestMqMedia media)
+    internal MessageQueue(TestMqMedia media, ILogger logger)
+        : base(logger)
     {
         _media = media;
     }

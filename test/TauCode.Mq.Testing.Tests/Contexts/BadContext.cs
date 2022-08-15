@@ -1,5 +1,5 @@
-﻿using TauCode.Mq.Testing.Tests.Handlers.Bye.Sync;
-using TauCode.Mq.Testing.Tests.Handlers.Hello.Sync;
+﻿using TauCode.Mq.Testing.Tests.Handlers.Bye.Async;
+using TauCode.Mq.Testing.Tests.Handlers.Hello.Async;
 
 namespace TauCode.Mq.Testing.Tests.Contexts;
 
@@ -32,12 +32,14 @@ public class BadContext : IMessageHandlerContext
         _throwOnDispose = throwOnDispose;
     }
 
-    public void Begin()
+    public Task BeginAsync(CancellationToken cancellationToken = default)
     {
         if (_throwOnBegin)
         {
             throw new NotSupportedException("Failed to begin.");
         }
+
+        return Task.CompletedTask;
     }
 
     public object GetService(Type serviceType)
@@ -52,25 +54,27 @@ public class BadContext : IMessageHandlerContext
             return null;
         }
 
-        if (serviceType == typeof(HelloHandler))
+        if (serviceType == typeof(HelloAsyncHandler))
         {
             if (_returnsWrongService)
             {
-                return new ByeHandler();
+                return new ByeAsyncHandler();
             }
 
-            return new HelloHandler();
+            return new HelloAsyncHandler();
         }
 
         throw new NotSupportedException($"Service of type '{serviceType.FullName}' not supported.");
     }
 
-    public void End()
+    public Task EndAsync(CancellationToken cancellationToken = default)
     {
         if (_throwOnEnd)
         {
             throw new NotSupportedException("Failed to end.");
         }
+
+        return Task.CompletedTask;
     }
 
     public void Dispose()

@@ -1,21 +1,20 @@
-﻿using TauCode.Mq.Abstractions;
-using TauCode.Mq.Testing.Tests.Messages;
+﻿using TauCode.Mq.Testing.Tests.Messages;
 
 namespace TauCode.Mq.Testing.Tests.BadHandlers;
 
 public class HelloAndByeHandler : IMessageHandler<HelloMessage>, IMessageHandler<ByeMessage>
 {
-    public void Handle(HelloMessage message)
+    public Task HandleAsync(HelloMessage message, CancellationToken cancellationToken = default)
     {
         throw new NotSupportedException();
     }
 
-    public void Handle(ByeMessage message)
+    public Task HandleAsync(ByeMessage message, CancellationToken cancellationToken = default)
     {
         throw new NotSupportedException();
     }
 
-    public void Handle(IMessage message)
+    public Task HandleAsync(IMessage message, CancellationToken cancellationToken = default)
     {
         throw new NotSupportedException();
     }

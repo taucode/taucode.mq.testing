@@ -1,10 +1,8 @@
-﻿using TauCode.Mq.Abstractions;
-
-namespace TauCode.Mq.Testing.Tests.BadHandlers;
+﻿namespace TauCode.Mq.Testing.Tests.BadHandlers;
 
 public class NonGenericHandler : IMessageHandler
 {
-    public void Handle(IMessage message)
+    public Task HandleAsync(IMessage message, CancellationToken cancellationToken = default)
     {
         throw new NotSupportedException();
     }

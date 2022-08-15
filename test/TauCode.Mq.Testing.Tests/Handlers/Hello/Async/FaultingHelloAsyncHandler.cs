@@ -2,9 +2,9 @@
 
 namespace TauCode.Mq.Testing.Tests.Handlers.Hello.Async;
 
-public class FaultingHelloAsyncHandler : AsyncMessageHandlerBase<HelloMessage>
+public class FaultingHelloAsyncHandler : MessageHandlerBase<HelloMessage>
 {
-    public override async Task HandleAsync(HelloMessage message, CancellationToken cancellationToken)
+    protected override async Task HandleAsyncImpl(HelloMessage message, CancellationToken cancellationToken = default)
     {
         var topicString = " (no topic)";
         if (message.Topic != null)

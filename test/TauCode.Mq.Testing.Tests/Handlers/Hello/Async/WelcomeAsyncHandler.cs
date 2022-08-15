@@ -3,9 +3,9 @@ using TauCode.Mq.Testing.Tests.Messages;
 
 namespace TauCode.Mq.Testing.Tests.Handlers.Hello.Async;
 
-public class WelcomeAsyncHandler : AsyncMessageHandlerBase<HelloMessage>
+public class WelcomeAsyncHandler : MessageHandlerBase<HelloMessage>
 {
-    public override async Task HandleAsync(HelloMessage message, CancellationToken cancellationToken)
+    protected override async Task HandleAsyncImpl(HelloMessage message, CancellationToken cancellationToken = default)
     {
         var topicString = " (no topic)";
         if (message.Topic != null)

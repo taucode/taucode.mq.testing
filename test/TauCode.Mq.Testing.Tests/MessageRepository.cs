@@ -1,6 +1,4 @@
-﻿using TauCode.Mq.Abstractions;
-
-namespace TauCode.Mq.Testing.Tests;
+﻿namespace TauCode.Mq.Testing.Tests;
 
 public class MessageRepository
 {

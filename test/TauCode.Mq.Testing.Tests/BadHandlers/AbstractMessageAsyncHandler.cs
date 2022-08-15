@@ -2,9 +2,9 @@
 
 namespace TauCode.Mq.Testing.Tests.BadHandlers;
 
-public class AbstractMessageAsyncHandler : AsyncMessageHandlerBase<AbstractMessage>
+public class AbstractMessageAsyncHandler : MessageHandlerBase<AbstractMessage>
 {
-    public override Task HandleAsync(AbstractMessage message, CancellationToken cancellationToken)
+    protected override Task HandleAsyncImpl(AbstractMessage message, CancellationToken cancellationToken = default)
     {
         throw new NotSupportedException();
     }

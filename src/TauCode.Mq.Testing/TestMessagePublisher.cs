@@ -1,4 +1,4 @@
-﻿using TauCode.Mq.Abstractions;
+﻿using Serilog;
 
 namespace TauCode.Mq.Testing;
 
@@ -12,7 +12,8 @@ public class TestMessagePublisher : MessagePublisherBase
 
     #region Constructor
 
-    public TestMessagePublisher(ITestMqMedia media)
+    public TestMessagePublisher(ITestMqMedia media, ILogger logger)
+        : base(logger)
     {
         _media = media ?? throw new ArgumentNullException(nameof(media));
     }

@@ -1,10 +1,10 @@
 ﻿using Serilog;
 using TauCode.Mq.Testing.Tests.Handlers.Bye.Async;
-using TauCode.Mq.Testing.Tests.Handlers.Bye.Sync;
 using TauCode.Mq.Testing.Tests.Handlers.Hello.Async;
-using TauCode.Mq.Testing.Tests.Handlers.Hello.Sync;
 
 namespace TauCode.Mq.Testing.Tests.Contexts;
+
+// todo clean
 
 public class GoodContext : IMessageHandlerContext
 {
@@ -13,7 +13,7 @@ public class GoodContext : IMessageHandlerContext
             typeof(BeBackAsyncHandler),
             typeof(ByeAsyncHandler),
 
-            typeof(ByeHandler),
+            //typeof(ByeHandler),
 
             typeof(CancelingHelloAsyncHandler),
             typeof(FaultingHelloAsyncHandler),
@@ -21,15 +21,16 @@ public class GoodContext : IMessageHandlerContext
             typeof(HelloAsyncHandler),
             typeof(WelcomeAsyncHandler),
 
-            typeof(FishHaterHandler),
-            typeof(HelloHandler),
-            typeof(WelcomeHandler),
+            //typeof(FishHaterHandler),
+            //typeof(HelloHandler),
+            //typeof(WelcomeHandler),
         }
         .ToHashSet();
 
-    public void Begin()
+    public Task BeginAsync(CancellationToken cancellationToken = default)
     {
         Log.Debug("Context began.");
+        return Task.CompletedTask;
     }
 
     public object GetService(Type serviceType)
@@ -49,9 +50,10 @@ public class GoodContext : IMessageHandlerContext
         throw new NotSupportedException($"Service of type '{serviceType.FullName}' is not supported.");
     }
 
-    public void End()
+    public Task EndAsync(CancellationToken cancellationToken = default)
     {
         Log.Debug("Context ended.");
+        return Task.CompletedTask;
     }
 
     public void Dispose()
