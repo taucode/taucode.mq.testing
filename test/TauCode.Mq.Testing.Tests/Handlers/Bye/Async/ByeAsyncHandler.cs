@@ -3,9 +3,9 @@ using TauCode.Mq.Testing.Tests.Messages;
 
 namespace TauCode.Mq.Testing.Tests.Handlers.Bye.Async;
 
-public class ByeAsyncHandler : AsyncMessageHandlerBase<ByeMessage>
+public class ByeAsyncHandler : MessageHandlerBase<ByeMessage>
 {
-    public override async Task HandleAsync(ByeMessage message, CancellationToken cancellationToken)
+    protected override async Task HandleAsyncImpl(ByeMessage message, CancellationToken cancellationToken = default)
     {
         var topicString = " (no topic)";
         if (message.Topic != null)

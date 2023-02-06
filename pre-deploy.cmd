@@ -1,9 +1,9 @@
 dotnet restore
 
-dotnet build --configuration Debug
-dotnet build --configuration Release
+dotnet build TauCode.Mq.Testing.sln -c Debug
+dotnet build TauCode.Mq.Testing.sln -c Release
 
-dotnet test -c Debug .\test\TauCode.Mq.Testing.Tests\TauCode.Mq.Testing.Tests.csproj
-dotnet test -c Release .\test\TauCode.Mq.Testing.Tests\TauCode.Mq.Testing.Tests.csproj
+dotnet test TauCode.Mq.Testing.sln -c Debug
+dotnet test TauCode.Mq.Testing.sln -c Release
 
 nuget pack nuget\TauCode.Mq.Testing.nuspec

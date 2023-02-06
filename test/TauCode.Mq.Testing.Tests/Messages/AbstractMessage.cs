@@ -1,6 +1,4 @@
-﻿using TauCode.Mq.Abstractions;
-
-namespace TauCode.Mq.Testing.Tests.Messages;
+﻿namespace TauCode.Mq.Testing.Tests.Messages;
 
 public abstract class AbstractMessage : IMessage
 {

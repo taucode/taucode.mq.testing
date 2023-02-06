@@ -1,4 +1,6 @@
-﻿namespace TauCode.Mq.Testing;
+﻿using Serilog;
+
+namespace TauCode.Mq.Testing;
 
 public class TestMessageSubscriber : MessageSubscriberBase
 {
@@ -10,8 +12,8 @@ public class TestMessageSubscriber : MessageSubscriberBase
 
     #region Constructor
 
-    public TestMessageSubscriber(ITestMqMedia media, IMessageHandlerContextFactory contextFactory)
-        : base(contextFactory)
+    public TestMessageSubscriber(IMessageHandlerContextFactory contextFactory, ITestMqMedia media, ILogger logger)
+        : base(contextFactory, logger)
     {
         _media = media ?? throw new ArgumentNullException(nameof(media));
     }
@@ -31,54 +33,69 @@ public class TestMessageSubscriber : MessageSubscriberBase
 
     protected override IDisposable SubscribeImpl(ISubscriptionRequest subscriptionRequest)
     {
-        if (subscriptionRequest.AsyncHandler != null && subscriptionRequest.Handler == null)
+        // todo clean
+        if (subscriptionRequest.Topic == null)
         {
-            // got async subscription
-            if (subscriptionRequest.Topic == null)
-            {
-                return _media.Subscribe(
-                    subscriptionRequest.MessageType,
-                    subscriptionRequest.AsyncHandler);
-            }
-            else
-            {
-                return _media.Subscribe(
-                    subscriptionRequest.MessageType,
-                    subscriptionRequest.AsyncHandler,
-                    subscriptionRequest.Topic);
-            }
-        }
-        else if (subscriptionRequest.Handler != null && subscriptionRequest.AsyncHandler == null)
-        {
-            // got sync subscription
-            if (subscriptionRequest.Topic == null)
-            {
-                return _media.Subscribe(
-                    subscriptionRequest.MessageType,
-                    obj =>
-                    {
-                        subscriptionRequest.Handler(obj);
-                        return Task.CompletedTask;
-                    });
-            }
-            else
-            {
-                return _media.Subscribe(
-                    subscriptionRequest.MessageType,
-                    obj =>
-                    {
-                        subscriptionRequest.Handler(obj);
-                        return Task.CompletedTask;
-                    },
-                    subscriptionRequest.Topic);
-            }
+            return _media.Subscribe(
+                subscriptionRequest.MessageType,
+                subscriptionRequest.AsyncHandler);
         }
         else
         {
-            throw new ArgumentException(
-                $"'{nameof(subscriptionRequest)}' is invalid.",
-                nameof(subscriptionRequest));
+            return _media.Subscribe(
+                subscriptionRequest.MessageType,
+                subscriptionRequest.AsyncHandler,
+                subscriptionRequest.Topic);
         }
+
+        //if (subscriptionRequest.AsyncHandler != null && subscriptionRequest.Handler == null)
+        //{
+        //    // got async subscription
+        //    if (subscriptionRequest.Topic == null)
+        //    {
+        //        return _media.Subscribe(
+        //            subscriptionRequest.MessageType,
+        //            subscriptionRequest.AsyncHandler);
+        //    }
+        //    else
+        //    {
+        //        return _media.Subscribe(
+        //            subscriptionRequest.MessageType,
+        //            subscriptionRequest.AsyncHandler,
+        //            subscriptionRequest.Topic);
+        //    }
+        //}
+        //else if (subscriptionRequest.Handler != null && subscriptionRequest.AsyncHandler == null)
+        //{
+        //    // got sync subscription
+        //    if (subscriptionRequest.Topic == null)
+        //    {
+        //        return _media.Subscribe(
+        //            subscriptionRequest.MessageType,
+        //            obj =>
+        //            {
+        //                subscriptionRequest.Handler(obj);
+        //                return Task.CompletedTask;
+        //            });
+        //    }
+        //    else
+        //    {
+        //        return _media.Subscribe(
+        //            subscriptionRequest.MessageType,
+        //            obj =>
+        //            {
+        //                subscriptionRequest.Handler(obj);
+        //                return Task.CompletedTask;
+        //            },
+        //            subscriptionRequest.Topic);
+        //    }
+        //}
+        //else
+        //{
+        //    throw new ArgumentException(
+        //        $"'{nameof(subscriptionRequest)}' is invalid.",
+        //        nameof(subscriptionRequest));
+        //}
     }
 
     #endregion

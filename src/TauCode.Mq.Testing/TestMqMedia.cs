@@ -1,6 +1,5 @@
-﻿using Microsoft.Extensions.Logging;
-using Newtonsoft.Json;
-using TauCode.Mq.Abstractions;
+﻿using Newtonsoft.Json;
+using Serilog;
 
 namespace TauCode.Mq.Testing;
 
@@ -10,21 +9,21 @@ public class TestMqMedia : ITestMqMedia
 
     private class MediaSubscription
     {
-        private readonly Dictionary<string, Func<IMessage, Task>> _handlers;
+        private readonly Dictionary<string, Func<IMessage, CancellationToken, Task>> _handlers;
 
         internal MediaSubscription(Type messageType, string topic)
         {
             this.MessageType = messageType;
             this.Topic = topic;
             this.Tag = BuildTag(messageType, topic);
-            _handlers = new Dictionary<string, Func<IMessage, Task>>();
+            _handlers = new Dictionary<string, Func<IMessage, CancellationToken, Task>>();
         }
 
         internal string Tag { get; }
         internal Type MessageType { get; }
         internal string Topic { get; }
 
-        internal string AddHandler(Func<IMessage, Task> handler)
+        internal string AddHandler(Func<IMessage, CancellationToken, Task> handler)
         {
             var id = Guid.NewGuid().ToString();
             _handlers.Add(id, handler);
@@ -32,7 +31,7 @@ public class TestMqMedia : ITestMqMedia
             return id;
         }
 
-        internal IReadOnlyList<Func<IMessage, Task>> GetHandlers() => _handlers.Values.ToList();
+        internal IReadOnlyList<Func<IMessage, CancellationToken, Task>> GetHandlers() => _handlers.Values.ToList();
 
         internal bool RemoveHandler(string id)
         {
@@ -59,7 +58,7 @@ public class TestMqMedia : ITestMqMedia
 
         _lock = new object();
         _subscriptions = new Dictionary<string, MediaSubscription>();
-        _messageQueue = new MessageQueue(this);
+        _messageQueue = new MessageQueue(this, logger);
         _messageQueue.Start();
     }
 
@@ -67,7 +66,7 @@ public class TestMqMedia : ITestMqMedia
 
     #region Private
 
-    private IDisposable SubscribeImpl(Type messageType, Func<IMessage, Task> handler, string topic)
+    private IDisposable SubscribeImpl(Type messageType, Func<IMessage, CancellationToken, Task> handler, string topic)
     {
         var tag = BuildTag(messageType, topic);
 
@@ -99,16 +98,16 @@ public class TestMqMedia : ITestMqMedia
             topicTag = BuildTag(messagePackage.MessageType, messagePackage.Topic);
         }
 
-        IEnumerable<Func<IMessage, Task>> allHandlers;
-        IEnumerable<Func<IMessage, Task>> topicHandlers;
+        IEnumerable<Func<IMessage, CancellationToken, Task>> allHandlers;
+        IEnumerable<Func<IMessage, CancellationToken, Task>> topicHandlers;
 
         lock (_lock)
         {
             var allSubscription = _subscriptions.GetValueOrDefault(allTag);
             var topicSubscription = _subscriptions.GetValueOrDefault(topicTag);
 
-            allHandlers = allSubscription?.GetHandlers() ?? new List<Func<IMessage, Task>>();
-            topicHandlers = topicSubscription?.GetHandlers() ?? new List<Func<IMessage, Task>>();
+            allHandlers = allSubscription?.GetHandlers() ?? new List<Func<IMessage, CancellationToken, Task>>();
+            topicHandlers = topicSubscription?.GetHandlers() ?? new List<Func<IMessage, CancellationToken, Task>>();
         }
 
         foreach (var handler in allHandlers)
@@ -116,11 +115,11 @@ public class TestMqMedia : ITestMqMedia
             try
             {
                 var message = JsonConvert.DeserializeObject(messagePackage.MessageJson, messagePackage.MessageType);
-                await handler((IMessage)message);
+                await handler((IMessage)message, default);
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Handler threw an exception.");
+                _logger?.Error(ex, "Handler threw an exception.");
             }
         }
 
@@ -129,11 +128,11 @@ public class TestMqMedia : ITestMqMedia
             try
             {
                 var message = JsonConvert.DeserializeObject(messagePackage.MessageJson, messagePackage.MessageType);
-                await handler((IMessage)message);
+                await handler((IMessage)message, default);
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Handler threw an exception.");
+                _logger?.Error(ex, "Handler threw an exception.");
             }
         }
     }
@@ -179,7 +178,7 @@ public class TestMqMedia : ITestMqMedia
         _messageQueue.AddAssignment(new MessagePackage(messageType, json, message.Topic));
     }
 
-    public IDisposable Subscribe(Type messageType, Func<IMessage, Task> handler)
+    public IDisposable Subscribe(Type messageType, Func<IMessage, CancellationToken, Task> handler)
     {
         if (messageType == null)
         {
@@ -194,7 +193,7 @@ public class TestMqMedia : ITestMqMedia
         return this.SubscribeImpl(messageType, handler, null);
     }
 
-    public IDisposable Subscribe(Type messageType, Func<IMessage, Task> handler, string topic)
+    public IDisposable Subscribe(Type messageType, Func<IMessage, CancellationToken, Task> handler, string topic)
     {
         if (messageType == null)
         {

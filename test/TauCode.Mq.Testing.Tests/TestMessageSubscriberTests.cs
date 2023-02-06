@@ -1,19 +1,16 @@
-﻿using Microsoft.Extensions.Logging;
-using Moq;
-using NUnit.Framework;
+﻿using NUnit.Framework;
 using Serilog;
-using Serilog.Extensions.Logging;
-using TauCode.Infrastructure.Logging;
+using System.Text;
+using TauCode.IO;
 using TauCode.Mq.Exceptions;
 using TauCode.Mq.Testing.Tests.BadHandlers;
 using TauCode.Mq.Testing.Tests.ContextFactories;
 using TauCode.Mq.Testing.Tests.Contexts;
 using TauCode.Mq.Testing.Tests.Handlers.Bye.Async;
-using TauCode.Mq.Testing.Tests.Handlers.Bye.Sync;
 using TauCode.Mq.Testing.Tests.Handlers.Hello.Async;
-using TauCode.Mq.Testing.Tests.Handlers.Hello.Sync;
 using TauCode.Mq.Testing.Tests.Messages;
 using TauCode.Working;
+using ILogger = Serilog.ILogger;
 
 // todo: check that topic, correlationId are preserved.
 namespace TauCode.Mq.Testing.Tests;
@@ -21,7 +18,9 @@ namespace TauCode.Mq.Testing.Tests;
 [TestFixture]
 public class TestMessageSubscriberTests
 {
-    private StringLogger _logger;
+    private ILogger _logger;
+    private StringWriterWithEncoding _writer = null!;
+
     private ITestMqMedia _media;
 
     [SetUp]
@@ -29,21 +28,17 @@ public class TestMessageSubscriberTests
     {
         MessageRepository.Instance.Clear();
 
-        _logger = new StringLogger();
-        _media = new TestMqMedia(_logger);
-
-        var collection = new LoggerProviderCollection();
-
-        Log.Logger = new LoggerConfiguration()
-            .WriteTo.Providers(collection)
-            .MinimumLevel
-            .Debug()
+        _writer = new StringWriterWithEncoding(Encoding.UTF8);
+        _logger = new LoggerConfiguration()
+            .WriteTo.TextWriter(
+                _writer,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}]{ObjectTag} {Message}{NewLine}{Exception}"
+            )
+            .MinimumLevel.Verbose()
             .CreateLogger();
+        Log.Logger = _logger;
 
-        var providerMock = new Mock<ILoggerProvider>();
-        providerMock.Setup(x => x.CreateLogger(It.IsAny<string>())).Returns(_logger);
-
-        collection.AddProvider(providerMock.Object);
+        _media = new TestMqMedia(_logger);
 
         DecayingMessage.IsPropertyDecayed = false;
         DecayingMessage.IsCtorDecayed = false;
@@ -55,16 +50,16 @@ public class TestMessageSubscriberTests
         _media.Dispose();
     }
 
-    private string CurrentLog => _logger.ToString();
+    private string CurrentLog => _writer.ToString();
 
     private IMessageSubscriber CreateMessageSubscriber(
         IMessageHandlerContextFactory factory,
         string name = null)
     {
-        var subscriber = new TestMessageSubscriber(_media, factory)
+        var subscriber = new TestMessageSubscriber(factory, _media, _logger)
         {
             Name = name,
-            Logger = _logger
+            //Logger = _logger
         };
 
         return subscriber;
@@ -74,10 +69,10 @@ public class TestMessageSubscriberTests
         string name = null) where TFactory : IMessageHandlerContextFactory, new()
     {
         var factory = new TFactory();
-        var subscriber = new TestMessageSubscriber(_media, factory)
+        var subscriber = new TestMessageSubscriber(factory, _media, _logger)
         {
             Name = name,
-            Logger = _logger
+            //Logger = _logger
         };
         return subscriber;
     }
@@ -91,7 +86,7 @@ public class TestMessageSubscriberTests
         var factory = new GoodContextFactory();
 
         // Act
-        using var subscriber = new TestMessageSubscriber(_media, factory);
+        using var subscriber = new TestMessageSubscriber(factory, _media, _logger);
 
         // Assert
         Assert.That(subscriber.ContextFactory, Is.SameAs(factory));
@@ -104,8 +99,9 @@ public class TestMessageSubscriberTests
 
         // Act
         var ex = Assert.Throws<ArgumentNullException>(() => new TestMessageSubscriber(
+            null,
             _media,
-            null));
+            _logger));
 
         // Assert
         Assert.That(ex.ParamName, Is.EqualTo("contextFactory"));
@@ -131,7 +127,7 @@ public class TestMessageSubscriberTests
 
         using var subscriber = this.CreateMessageSubscriber(factory);
 
-        subscriber.Subscribe(typeof(HelloHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
 
         subscriber.Start();
 
@@ -165,7 +161,7 @@ public class TestMessageSubscriberTests
 
         using var subscriber = this.CreateMessageSubscriber(factory);
 
-        subscriber.Subscribe(typeof(HelloHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
 
         subscriber.Start();
 
@@ -201,7 +197,7 @@ public class TestMessageSubscriberTests
 
         using var subscriber = this.CreateMessageSubscriber(factory);
 
-        subscriber.Subscribe(typeof(HelloHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
 
         subscriber.Start();
 
@@ -237,7 +233,7 @@ public class TestMessageSubscriberTests
 
         using var subscriber = this.CreateMessageSubscriber(factory);
 
-        subscriber.Subscribe(typeof(HelloHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
 
         subscriber.Start();
 
@@ -271,7 +267,7 @@ public class TestMessageSubscriberTests
 
         using var subscriber = this.CreateMessageSubscriber(factory);
 
-        subscriber.Subscribe(typeof(HelloHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
 
         subscriber.Start();
 
@@ -305,7 +301,7 @@ public class TestMessageSubscriberTests
 
         using var subscriber = this.CreateMessageSubscriber(factory);
 
-        subscriber.Subscribe(typeof(HelloHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
 
         subscriber.Start();
 
@@ -339,7 +335,7 @@ public class TestMessageSubscriberTests
 
         using var subscriber = this.CreateMessageSubscriber(factory);
 
-        subscriber.Subscribe(typeof(HelloHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
 
         subscriber.Start();
 
@@ -354,116 +350,118 @@ public class TestMessageSubscriberTests
 
         // Assert
         var log = this.CurrentLog;
-        Assert.That(log, Does.Contain($"Method 'GetService' of context '{typeof(BadContext).FullName}' returned wrong service of type '{typeof(ByeHandler).FullName}'."));
+        Assert.That(log, Does.Contain($"Method 'GetService' of context '{typeof(BadContext).FullName}' returned wrong service of type '{typeof(ByeAsyncHandler).FullName}'."));
     }
 
     #endregion
 
     #region Subscribe(Type)
 
-    [Test]
-    public async Task SubscribeType_SingleSyncHandler_HandlesMessagesWithAndWithoutTopic()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeType_SingleSyncHandler_HandlesMessagesWithAndWithoutTopic()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler));
-        subscriber.Subscribe(typeof(WelcomeHandler), "topic1");
+    //    subscriber.Subscribe(typeof(HelloHandler));
+    //    subscriber.Subscribe(typeof(WelcomeHandler), "topic1");
 
-        subscriber.Start();
+    //    subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        publisher.Publish(new HelloMessage("Lesia")
-        {
-            Topic = "topic1",
-        });
-        publisher.Publish(new HelloMessage("Olia"));
+    //    // Act
+    //    publisher.Publish(new HelloMessage("Lesia")
+    //    {
+    //        Topic = "topic1",
+    //    });
+    //    publisher.Publish(new HelloMessage("Olia"));
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello sync (topic: 'topic1'), Lesia!"));
-        Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'topic1'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
 
-        Assert.That(log, Does.Contain("Hello sync (no topic), Olia!"));
-        Assert.That(log, Does.Not.Contain("Welcome sync (no topic), Olia!"));
-    }
+    //    Assert.That(log, Does.Contain("Hello sync (no topic), Olia!"));
+    //    Assert.That(log, Does.Not.Contain("Welcome sync (no topic), Olia!"));
+    //}
 
-    [Test]
-    public async Task SubscribeType_MultipleSyncHandlers_HandleMessagesWithAndWithoutTopic()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    // todo clean
+    //[Test]
+    //public async Task SubscribeType_MultipleSyncHandlers_HandleMessagesWithAndWithoutTopic()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler));
-        subscriber.Subscribe(typeof(WelcomeHandler));
+    //    subscriber.Subscribe(typeof(HelloHandler));
+    //    subscriber.Subscribe(typeof(WelcomeHandler));
 
-        subscriber.Subscribe(typeof(FishHaterHandler), "topic1");
+    //    subscriber.Subscribe(typeof(FishHaterHandler), "topic1");
 
-        subscriber.Start();
+    //    subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        publisher.Publish(new HelloMessage("Lesia")
-        {
-            Topic = "topic1",
-        });
-        publisher.Publish(new HelloMessage("Olia"));
+    //    // Act
+    //    publisher.Publish(new HelloMessage("Lesia")
+    //    {
+    //        Topic = "topic1",
+    //    });
+    //    publisher.Publish(new HelloMessage("Olia"));
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello sync (topic: 'topic1'), Lesia!"));
-        Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
-        Assert.That(log, Does.Contain("Not fish - then hi sync (topic: 'topic1'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'topic1'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Not fish - then hi sync (topic: 'topic1'), Lesia!"));
 
-        Assert.That(log, Does.Contain("Hello sync (no topic), Olia!"));
-        Assert.That(log, Does.Contain("Welcome sync (no topic), Olia!"));
+    //    Assert.That(log, Does.Contain("Hello sync (no topic), Olia!"));
+    //    Assert.That(log, Does.Contain("Welcome sync (no topic), Olia!"));
 
-        Assert.That(log, Does.Not.Contain("Not fish - then hi sync (no topic), Olia!"));
-    }
+    //    Assert.That(log, Does.Not.Contain("Not fish - then hi sync (no topic), Olia!"));
+    //}
 
-    [Test]
-    public async Task SubscribeType_SingleAsyncHandler_HandlesMessagesWithAndWithoutTopic()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    // todo clean
+    //[Test]
+    //public async Task SubscribeType_SingleAsyncHandler_HandlesMessagesWithAndWithoutTopic()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloAsyncHandler));
-        subscriber.Subscribe(typeof(WelcomeHandler), "topic1");
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler));
+    //    subscriber.Subscribe(typeof(WelcomeHandler), "topic1");
 
-        subscriber.Start();
+    //    subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        publisher.Publish(new HelloMessage("Lesia")
-        {
-            Topic = "topic1",
-        });
-        publisher.Publish(new HelloMessage("Olia"));
+    //    // Act
+    //    publisher.Publish(new HelloMessage("Lesia")
+    //    {
+    //        Topic = "topic1",
+    //    });
+    //    publisher.Publish(new HelloMessage("Olia"));
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello async (topic: 'topic1'), Lesia!"));
-        Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Hello async (topic: 'topic1'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Welcome sync (topic: 'topic1'), Lesia!"));
 
-        Assert.That(log, Does.Contain("Hello async (no topic), Olia!"));
-        Assert.That(log, Does.Not.Contain("Welcome sync (no topic), Olia!"));
-    }
+    //    Assert.That(log, Does.Contain("Hello async (no topic), Olia!"));
+    //    Assert.That(log, Does.Not.Contain("Welcome sync (no topic), Olia!"));
+    //}
 
     [Test]
     public async Task SubscribeType_MultipleAsyncHandlers_HandleMessagesWithAndWithoutTopic()
@@ -474,11 +472,11 @@ public class TestMessageSubscriberTests
         subscriber.Subscribe(typeof(HelloAsyncHandler));
         subscriber.Subscribe(typeof(WelcomeAsyncHandler));
 
-        subscriber.Subscribe(typeof(HelloHandler), "topic1");
+        subscriber.Subscribe(typeof(HelloAsyncHandler), "topic1");
 
         subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
+        using var publisher = new TestMessagePublisher(_media, _logger);
         publisher.Start();
 
         // Act
@@ -495,11 +493,9 @@ public class TestMessageSubscriberTests
 
         Assert.That(log, Does.Contain("Hello async (topic: 'topic1'), Lesia!"));
         Assert.That(log, Does.Contain("Welcome async (topic: 'topic1'), Lesia!"));
-        Assert.That(log, Does.Contain("Hello sync (topic: 'topic1'), Lesia!"));
 
         Assert.That(log, Does.Contain("Hello async (no topic), Olia!"));
         Assert.That(log, Does.Contain("Welcome async (no topic), Olia!"));
-        Assert.That(log, Does.Not.Contain("Hello sync (no topic), Olia!"));
     }
 
     [Test]
@@ -543,47 +539,47 @@ public class TestMessageSubscriberTests
         Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must represent a class."));
     }
 
-    [Test]
-    [TestCase(typeof(NonGenericHandler))]
-    [TestCase(typeof(NotImplementingHandlerInterface))]
-    public void SubscribeType_TypeIsNotGenericSyncOrAsyncHandler_ThrowsException(Type badHandlerType)
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //[TestCase(typeof(NonGenericHandler))]
+    //[TestCase(typeof(NotImplementingHandlerInterface))]
+    //public void SubscribeType_TypeIsNotGenericSyncOrAsyncHandler_ThrowsException(Type badHandlerType)
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        // Act
-        var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
+    //    // Act
+    //    var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
 
-        // Assert
-        Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
-        Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
-    }
+    //    // Assert
+    //    Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
+    //    Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
+    //}
 
-    [Test]
-    public void SubscribeType_TypeIsSyncAfterAsync_ThrowsException()
-    {
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public void SubscribeType_TypeIsSyncAfterAsync_ThrowsException()
+    //{
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloAsyncHandler));
-        var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler))); // todo: if previous 'HelloAsyncHandler' was subscribed to some topic, exception won't be thrown.
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler));
+    //    var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler))); // todo: if previous 'HelloAsyncHandler' was subscribed to some topic, exception won't be thrown.
 
-        // Assert
-        Assert.That(ex, Has.Message.EqualTo($"Cannot subscribe synchronous handler '{typeof(HelloHandler).FullName}' to message '{typeof(HelloMessage)}' (no topic) because there are asynchronous handlers existing for that subscription."));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.EqualTo($"Cannot subscribe synchronous handler '{typeof(HelloHandler).FullName}' to message '{typeof(HelloMessage)}' (no topic) because there are asynchronous handlers existing for that subscription."));
+    //}
 
-    [Test]
-    public void SubscribeType_TypeIsAsyncAfterSync_ThrowsException()
-    {
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public void SubscribeType_TypeIsAsyncAfterSync_ThrowsException()
+    //{
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloHandler));
-        var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloAsyncHandler))); // todo: if previous 'HelloHandler' was subscribed to some topic, exception won't be thrown.
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloHandler));
+    //    var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloAsyncHandler))); // todo: if previous 'HelloHandler' was subscribed to some topic, exception won't be thrown.
 
-        // Assert
-        Assert.That(ex, Has.Message.EqualTo($"Cannot subscribe asynchronous handler '{typeof(HelloAsyncHandler).FullName}' to message '{typeof(HelloMessage)}' (no topic) because there are synchronous handlers existing for that subscription."));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.EqualTo($"Cannot subscribe asynchronous handler '{typeof(HelloAsyncHandler).FullName}' to message '{typeof(HelloMessage)}' (no topic) because there are synchronous handlers existing for that subscription."));
+    //}
 
     [Test]
     public void SubscribeType_TypeImplementsIMessageHandlerTMessageMoreThanOnce_ThrowsException()
@@ -594,7 +590,7 @@ public class TestMessageSubscriberTests
         var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAndByeHandler)));
 
         // Assert
-        Assert.That(ex, Has.Message.StartWith($"'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
+        Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must implement 'TauCode.Mq.IMessageHandler<TMessage>' once."));
         Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
     }
 
@@ -607,36 +603,37 @@ public class TestMessageSubscriberTests
         var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAndByeAsyncHandler)));
 
         // Assert
-        Assert.That(ex, Has.Message.StartWith($"'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
+        Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must implement 'TauCode.Mq.IMessageHandler<TMessage>' once."));
         Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
     }
 
-    [Test]
-    public void SubscribeType_TypeImplementsBothSyncAndAsync_ThrowsException()
-    {
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public void SubscribeType_TypeImplementsBothSyncAndAsync_ThrowsException()
+    //{
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        // Act
-        var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(BothSyncAndAsyncHandler)));
+    //    // Act
+    //    var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(BothSyncAndAsyncHandler)));
 
-        // Assert
-        Assert.That(ex, Has.Message.StartWith($"'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
-        Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.StartWith($"'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
+    //    Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
+    //}
 
-    [Test]
-    public void SubscribeType_SyncTypeAlreadySubscribed_ThrowsException()
-    {
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    // todo clean
+    //[Test]
+    //public void SubscribeType_SyncTypeAlreadySubscribed_ThrowsException()
+    //{
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler));
+    //    subscriber.Subscribe(typeof(HelloHandler));
 
-        // Act
-        var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler))); // todo: there would be no error if previous subscription was with some topic.
+    //    // Act
+    //    var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler))); // todo: there would be no error if previous subscription was with some topic.
 
-        // Assert
-        Assert.That(ex, Has.Message.EqualTo($"Handler type '{typeof(HelloHandler).FullName}' already registered for message type '{typeof(HelloMessage).FullName}' (no topic)."));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.EqualTo($"Handler type '{typeof(HelloHandler).FullName}' already registered for message type '{typeof(HelloMessage).FullName}' (no topic)."));
+    //}
 
     [Test]
     public void SubscribeType_AsyncTypeAlreadySubscribed_ThrowsException()
@@ -668,21 +665,22 @@ public class TestMessageSubscriberTests
         Assert.That(ex.ParamName, Is.EqualTo("messageType"));
     }
 
-    [Test]
-    [TestCase(typeof(StructMessageHandler))]
-    [TestCase(typeof(StructMessageAsyncHandler))]
-    public void SubscribeType_TMessageIsNotClass_ThrowsException(Type badHandlerType)
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    // todo clean
+    //[Test]
+    //[TestCase(typeof(StructMessageHandler))]
+    //[TestCase(typeof(StructMessageAsyncHandler))]
+    //public void SubscribeType_TMessageIsNotClass_ThrowsException(Type badHandlerType)
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        // Act
-        var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
+    //    // Act
+    //    var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
 
-        // Assert
-        Assert.That(ex, Has.Message.StartWith($"Cannot handle non-class message type '{typeof(StructMessage).FullName}'."));
-        Assert.That(ex.ParamName, Is.EqualTo("messageType"));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.StartWith($"Cannot handle non-class message type '{typeof(StructMessage).FullName}'."));
+    //    Assert.That(ex.ParamName, Is.EqualTo("messageType"));
+    //}
 
     [Test]
     public async Task SubscribeType_TMessageCtorThrows_LogsException()
@@ -734,33 +732,34 @@ public class TestMessageSubscriberTests
         Assert.That(log, Does.Contain("Alas Property Decayed!"));
     }
 
-    [Test]
-    public async Task SubscribeType_SyncHandlerHandleThrows_LogsException()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    // todo clean
+    //[Test]
+    //public async Task SubscribeType_SyncHandlerHandleThrows_LogsException()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        var message = new HelloMessage
-        {
-            Name = "Big Fish",
-        };
+    //    var message = new HelloMessage
+    //    {
+    //        Name = "Big Fish",
+    //    };
 
-        subscriber.Subscribe(typeof(HelloHandler)); // #0, will handle
-        subscriber.Subscribe(typeof(FishHaterHandler)); // #1, will throw
-        subscriber.Subscribe(typeof(WelcomeHandler)); // #2, will handle
+    //    subscriber.Subscribe(typeof(HelloHandler)); // #0, will handle
+    //    subscriber.Subscribe(typeof(FishHaterHandler)); // #1, will throw
+    //    subscriber.Subscribe(typeof(WelcomeHandler)); // #2, will handle
 
-        subscriber.Start();
+    //    subscriber.Start();
 
-        // Act
-        _media.Publish(message);
-        await Task.Delay(300);
+    //    // Act
+    //    _media.Publish(message);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
-        Assert.That(log, Does.Contain("Hello sync (no topic), Big Fish!"));
-        Assert.That(log, Does.Contain("I hate you sync (no topic), 'Big Fish'! Exception thrown!"));
-        Assert.That(log, Does.Contain("Welcome sync (no topic), Big Fish!"));
-    }
+    //    // Assert
+    //    var log = this.CurrentLog;
+    //    Assert.That(log, Does.Contain("Hello sync (no topic), Big Fish!"));
+    //    Assert.That(log, Does.Contain("I hate you sync (no topic), 'Big Fish'! Exception thrown!"));
+    //    Assert.That(log, Does.Contain("Welcome sync (no topic), Big Fish!"));
+    //}
 
     // todo: context.end() should not be called if handler thrown, faulted or canceled.
 
@@ -857,69 +856,70 @@ public class TestMessageSubscriberTests
 
     #region Subscribe(Type, string)
 
-    [Test]
-    public async Task SubscribeTypeString_SingleSyncHandler_HandlesMessagesWithProperTopic()
-    {
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    // todo clean
+    //[Test]
+    //public async Task SubscribeTypeString_SingleSyncHandler_HandlesMessagesWithProperTopic()
+    //{
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler), "topic1");
-        subscriber.Subscribe(typeof(HelloHandler), "topic2");
+    //    subscriber.Subscribe(typeof(HelloHandler), "topic1");
+    //    subscriber.Subscribe(typeof(HelloHandler), "topic2");
 
-        subscriber.Start();
+    //    subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        var message = new HelloMessage("Lesia")
-        {
-            Topic = "topic2",
-        };
-        publisher.Publish(message);
+    //    // Act
+    //    var message = new HelloMessage("Lesia")
+    //    {
+    //        Topic = "topic2",
+    //    };
+    //    publisher.Publish(message);
 
-        await Task.Delay(1300);
+    //    await Task.Delay(1300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello sync (topic: 'topic2'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'topic2'), Lesia!"));
 
-        Assert.That(log, Does.Not.Contain("Hello sync (topic: 'topic1'), Lesia!"));
-    }
+    //    Assert.That(log, Does.Not.Contain("Hello sync (topic: 'topic1'), Lesia!"));
+    //}
 
-    [Test]
-    public async Task SubscribeTypeString_MultipleSyncHandlers_HandleMessagesWithProperTopic()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeTypeString_MultipleSyncHandlers_HandleMessagesWithProperTopic()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler), "topic1");
+    //    subscriber.Subscribe(typeof(HelloHandler), "topic1");
 
-        subscriber.Subscribe(typeof(HelloHandler), "topic2");
-        subscriber.Subscribe(typeof(WelcomeHandler), "topic2");
+    //    subscriber.Subscribe(typeof(HelloHandler), "topic2");
+    //    subscriber.Subscribe(typeof(WelcomeHandler), "topic2");
 
-        subscriber.Start();
+    //    subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        var message = new HelloMessage("Lesia")
-        {
-            Topic = "topic2",
-        };
-        publisher.Publish(message);
+    //    // Act
+    //    var message = new HelloMessage("Lesia")
+    //    {
+    //        Topic = "topic2",
+    //    };
+    //    publisher.Publish(message);
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello sync (topic: 'topic2'), Lesia!"));
-        Assert.That(log, Does.Contain("Welcome sync (topic: 'topic2'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'topic2'), Lesia!"));
+    //    Assert.That(log, Does.Contain("Welcome sync (topic: 'topic2'), Lesia!"));
 
-        Assert.That(log, Does.Not.Contain("Hello sync (topic: 'topic1'), Lesia!"));
-    }
+    //    Assert.That(log, Does.Not.Contain("Hello sync (topic: 'topic1'), Lesia!"));
+    //}
 
     [Test]
     public async Task SubscribeTypeString_SingleAsyncHandler_HandlesMessagesWithProperTopic()
@@ -932,7 +932,7 @@ public class TestMessageSubscriberTests
 
         subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
+        using var publisher = new TestMessagePublisher(_media, _logger);
         publisher.Start();
 
         // Act
@@ -964,7 +964,7 @@ public class TestMessageSubscriberTests
 
         subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
+        using var publisher = new TestMessagePublisher(_media, _logger);
         publisher.Start();
 
         // Act
@@ -993,7 +993,7 @@ public class TestMessageSubscriberTests
         using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
         // Act
-        var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloHandler), badTopic));
+        var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAsyncHandler), badTopic));
 
         // Assert
         Assert.That(ex, Has.Message.EqualTo("'topic' cannot be null or empty. If you need a topicless subscription, use the 'Subscribe(Type messageHandlerType)' overload. (Parameter 'topic')"));
@@ -1040,166 +1040,168 @@ public class TestMessageSubscriberTests
         Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must represent a class."));
     }
 
-    [Test]
-    [TestCase(typeof(NonGenericHandler))]
-    [TestCase(typeof(NotImplementingHandlerInterface))]
-    public void SubscribeTypeString_TypeIsNotGenericSyncOrAsyncHandler_ThrowsException(Type badHandlerType)
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //[TestCase(typeof(NonGenericHandler))]
+    //[TestCase(typeof(NotImplementingHandlerInterface))]
+    //public void SubscribeTypeString_TypeIsNotGenericSyncOrAsyncHandler_ThrowsException(Type badHandlerType)
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        // Act
-        var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
+    //    // Act
+    //    var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType));
 
-        // Assert
-        Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
-        Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
-    }
+    //    // Assert
+    //    Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
+    //    Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
+    //}
 
-    [Test]
-    public void SubscribeTypeString_TypeIsSyncAfterAsyncSameTopic_ThrowsException()
-    {
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    // todo clean
+    //[Test]
+    //public void SubscribeTypeString_TypeIsSyncAfterAsyncSameTopic_ThrowsException()
+    //{
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
-        // Act
-        var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler), "some-topic"));
+    //    // Act
+    //    var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler), "some-topic"));
 
-        // Assert
-        Assert.That(ex, Has.Message.EqualTo($"Cannot subscribe synchronous handler '{typeof(HelloHandler)}' to message '{typeof(HelloMessage).FullName}' (topic: 'some-topic') because there are asynchronous handlers existing for that subscription."));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.EqualTo($"Cannot subscribe synchronous handler '{typeof(HelloHandler)}' to message '{typeof(HelloMessage).FullName}' (topic: 'some-topic') because there are asynchronous handlers existing for that subscription."));
+    //}
 
-    [Test]
-    public async Task SubscribeTypeString_TypeIsSyncAfterAsyncButThatAsyncHasDifferentTopic_RunsOk()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    // todo clean
+    //[Test]
+    //public async Task SubscribeTypeString_TypeIsSyncAfterAsyncButThatAsyncHasDifferentTopic_RunsOk()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloHandler), "another-topic");
-        subscriber.Start();
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloHandler), "another-topic");
+    //    subscriber.Start();
 
-        publisher.Publish(new HelloMessage("Nika")
-        {
-            Topic = "another-topic",
-        });
+    //    publisher.Publish(new HelloMessage("Nika")
+    //    {
+    //        Topic = "another-topic",
+    //    });
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
-        Assert.That(log, Does.Not.Contain("Hello async (topic: 'another-topic'), Nika!"));
-    }
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
+    //    Assert.That(log, Does.Not.Contain("Hello async (topic: 'another-topic'), Nika!"));
+    //}
 
-    [Test]
-    public async Task SubscribeTypeString_TypeIsSyncAfterAsyncButThatAsyncIsTopicless_RunsOk()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeTypeString_TypeIsSyncAfterAsyncButThatAsyncIsTopicless_RunsOk()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloAsyncHandler));
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler));
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media, _logger);
+    //    publisher.Start();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloHandler), "another-topic");
-        subscriber.Start();
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloHandler), "another-topic");
+    //    subscriber.Start();
 
-        publisher.Publish(new HelloMessage("Nika")
-        {
-            Topic = "another-topic",
-        });
+    //    publisher.Publish(new HelloMessage("Nika")
+    //    {
+    //        Topic = "another-topic",
+    //    });
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
-        Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
-    }
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
+    //    Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
+    //}
 
-    [Test]
-    public void SubscribeTypeString_TypeIsAsyncAfterSyncSameTopic_ThrowsException()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public void SubscribeTypeString_TypeIsAsyncAfterSyncSameTopic_ThrowsException()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler), "some-topic");
+    //    subscriber.Subscribe(typeof(HelloHandler), "some-topic");
 
-        // Act
-        var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic"));
+    //    // Act
+    //    var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic"));
 
-        // Assert
-        Assert.That(ex, Has.Message.StartWith($"Cannot subscribe asynchronous handler '{typeof(HelloAsyncHandler).FullName}' to message '{typeof(HelloMessage).FullName}' (topic: 'some-topic') because there are synchronous handlers existing for that subscription."));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.StartWith($"Cannot subscribe asynchronous handler '{typeof(HelloAsyncHandler).FullName}' to message '{typeof(HelloMessage).FullName}' (topic: 'some-topic') because there are synchronous handlers existing for that subscription."));
+    //}
 
-    [Test]
-    public async Task SubscribeTypeString_TypeIsAsyncAfterSyncButThatSyncHasDifferentTopic_RunsOk()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeTypeString_TypeIsAsyncAfterSyncButThatSyncHasDifferentTopic_RunsOk()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler), "some-topic");
+    //    subscriber.Subscribe(typeof(HelloHandler), "some-topic");
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media, _logger);
+    //    publisher.Start();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloAsyncHandler), "another-topic");
-        subscriber.Start();
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler), "another-topic");
+    //    subscriber.Start();
 
-        publisher.Publish(new HelloMessage("Nika")
-        {
-            Topic = "another-topic",
-        });
+    //    publisher.Publish(new HelloMessage("Nika")
+    //    {
+    //        Topic = "another-topic",
+    //    });
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
-        Assert.That(log, Does.Not.Contain("Hello sync (topic: 'another-topic'), Nika!"));
-    }
+    //    Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
+    //    Assert.That(log, Does.Not.Contain("Hello sync (topic: 'another-topic'), Nika!"));
+    //}
 
-    [Test]
-    public async Task SubscribeTypeString_TypeIsAsyncAfterSyncButThatSyncIsTopicless_RunsOk()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeTypeString_TypeIsAsyncAfterSyncButThatSyncIsTopicless_RunsOk()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler));
+    //    subscriber.Subscribe(typeof(HelloHandler));
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloAsyncHandler), "another-topic");
-        subscriber.Start();
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler), "another-topic");
+    //    subscriber.Start();
 
-        publisher.Publish(new HelloMessage("Nika")
-        {
-            Topic = "another-topic",
-        });
+    //    publisher.Publish(new HelloMessage("Nika")
+    //    {
+    //        Topic = "another-topic",
+    //    });
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
-        Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
-    }
+    //    Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Nika!"));
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Nika!"));
+    //}
 
     [Test]
     public void SubscribeTypeString_TypeImplementsIMessageHandlerTMessageMoreThanOnce_ThrowsException()
@@ -1211,7 +1213,7 @@ public class TestMessageSubscriberTests
         var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAndByeHandler), "some-topic"));
 
         // Assert
-        Assert.That(ex, Has.Message.StartWith($"'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
+        Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must implement 'TauCode.Mq.IMessageHandler<TMessage>' once."));
         Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
     }
 
@@ -1225,113 +1227,113 @@ public class TestMessageSubscriberTests
         var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(HelloAndByeAsyncHandler), "some-topic"));
 
         // Assert
-        Assert.That(ex, Has.Message.StartWith($"'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
+        Assert.That(ex, Has.Message.StartWith("'messageHandlerType' must implement 'TauCode.Mq.IMessageHandler<TMessage>' once."));
         Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
     }
 
-    [Test]
-    public void SubscribeTypeString_TypeImplementsBothSyncAndAsync_ThrowsException()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public void SubscribeTypeString_TypeImplementsBothSyncAndAsync_ThrowsException()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        // Act
-        var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(BothSyncAndAsyncHandler), "some-topic"));
+    //    // Act
+    //    var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(typeof(BothSyncAndAsyncHandler), "some-topic"));
 
-        // Assert
-        Assert.That(ex, Has.Message.StartWith($"'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
-        Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.StartWith($"'messageHandlerType' must implement either 'IMessageHandler<TMessage>' or 'IAsyncMessageHandler<TMessage>' in a one-time manner."));
+    //    Assert.That(ex.ParamName, Is.EqualTo("messageHandlerType"));
+    //}
 
 
-    [Test]
-    public void SubscribeTypeString_SyncTypeAlreadySubscribedToTheSameTopic_ThrowsException()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public void SubscribeTypeString_SyncTypeAlreadySubscribedToTheSameTopic_ThrowsException()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler), "some-topic");
+    //    subscriber.Subscribe(typeof(HelloHandler), "some-topic");
 
-        // Act
-        var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler), "some-topic"));
+    //    // Act
+    //    var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler), "some-topic"));
 
-        // Assert
-        Assert.That(ex, Has.Message.StartWith($"Handler type '{typeof(HelloHandler).FullName}' already registered for message type '{typeof(HelloMessage).FullName}' (topic: 'some-topic')."));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.StartWith($"Handler type '{typeof(HelloHandler).FullName}' already registered for message type '{typeof(HelloMessage).FullName}' (topic: 'some-topic')."));
+    //}
 
-    [Test]
-    public async Task SubscribeTypeString_SyncTypeAlreadySubscribedButToDifferentTopic_RunsOk()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeTypeString_SyncTypeAlreadySubscribedButToDifferentTopic_RunsOk()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler), "some-topic");
+    //    subscriber.Subscribe(typeof(HelloHandler), "some-topic");
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloHandler), "another-topic");
-        subscriber.Start();
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloHandler), "another-topic");
+    //    subscriber.Start();
 
-        publisher.Publish(new HelloMessage("Alina")
-        {
-            Topic = "another-topic",
-        });
+    //    publisher.Publish(new HelloMessage("Alina")
+    //    {
+    //        Topic = "another-topic",
+    //    });
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
-        Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Alina!"));
-        Assert.That(log, Does.Not.Contain("Hello sync (topic: 'some-topic'), Alina!"));
-    }
+    //    // Assert
+    //    var log = this.CurrentLog;
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Alina!"));
+    //    Assert.That(log, Does.Not.Contain("Hello sync (topic: 'some-topic'), Alina!"));
+    //}
 
-    [Test]
-    public async Task SubscribeTypeString_SyncTypeAlreadySubscribedButWithoutTopic_RunsOk()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeTypeString_SyncTypeAlreadySubscribedButWithoutTopic_RunsOk()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler)); // without topic
+    //    subscriber.Subscribe(typeof(HelloHandler)); // without topic
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
-        subscriber.Start();
+    //    subscriber.Start();
 
-        var message = new HelloMessage("Marina")
-        {
-            Topic = "some-topic",
-        };
-        publisher.Publish(message);
+    //    var message = new HelloMessage("Marina")
+    //    {
+    //        Topic = "some-topic",
+    //    };
+    //    publisher.Publish(message);
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
+    //    // Assert
+    //    var log = this.CurrentLog;
 
-        Assert.That(log, Does.Contain("Hello sync (topic: 'some-topic'), Marina!"));
-        Assert.That(log, Does.Contain("Hello async (topic: 'some-topic'), Marina!"));
-    }
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'some-topic'), Marina!"));
+    //    Assert.That(log, Does.Contain("Hello async (topic: 'some-topic'), Marina!"));
+    //}
 
-    [Test]
-    public void SubscribeTypeString_AsyncTypeAlreadySubscribedToTheSameTopic_ThrowsException()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public void SubscribeTypeString_AsyncTypeAlreadySubscribedToTheSameTopic_ThrowsException()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
-        // Act
-        var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler), "some-topic"));
+    //    // Act
+    //    var ex = Assert.Throws<MqException>(() => subscriber.Subscribe(typeof(HelloHandler), "some-topic"));
 
-        // Assert
-        Assert.That(ex, Has.Message.EqualTo($"Cannot subscribe synchronous handler '{typeof(HelloHandler).FullName}' to message '{typeof(HelloMessage).FullName}' (topic: 'some-topic') because there are asynchronous handlers existing for that subscription."));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.EqualTo($"Cannot subscribe synchronous handler '{typeof(HelloHandler).FullName}' to message '{typeof(HelloMessage).FullName}' (topic: 'some-topic') because there are asynchronous handlers existing for that subscription."));
+    //}
 
     [Test]
     public async Task SubscribeTypeString_AsyncTypeAlreadySubscribedButToDifferentTopic_SubscribesOk()
@@ -1341,7 +1343,7 @@ public class TestMessageSubscriberTests
 
         subscriber.Subscribe(typeof(HelloAsyncHandler), "some-topic");
 
-        using var publisher = new TestMessagePublisher(_media);
+        using var publisher = new TestMessagePublisher(_media, _logger);
         publisher.Start();
 
         // Act
@@ -1361,33 +1363,33 @@ public class TestMessageSubscriberTests
         Assert.That(log, Does.Not.Contain("Hello async (topic: 'some-topic'), Alina!"));
     }
 
-    [Test]
-    public async Task SubscribeTypeString_AsyncTypeAlreadySubscribedButWithoutTopic_SubscribesOk()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeTypeString_AsyncTypeAlreadySubscribedButWithoutTopic_SubscribesOk()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloAsyncHandler)); // without topic
+    //    subscriber.Subscribe(typeof(HelloAsyncHandler)); // without topic
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media, _logger);
+    //    publisher.Start();
 
-        // Act
-        subscriber.Subscribe(typeof(HelloHandler), "another-topic");
-        subscriber.Start();
+    //    // Act
+    //    subscriber.Subscribe(typeof(HelloHandler), "another-topic");
+    //    subscriber.Start();
 
-        publisher.Publish(new HelloMessage("Alina")
-        {
-            Topic = "another-topic",
-        });
+    //    publisher.Publish(new HelloMessage("Alina")
+    //    {
+    //        Topic = "another-topic",
+    //    });
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
-        Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Alina!"));
-        Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Alina!"));
-    }
+    //    // Assert
+    //    var log = this.CurrentLog;
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'another-topic'), Alina!"));
+    //    Assert.That(log, Does.Contain("Hello async (topic: 'another-topic'), Alina!"));
+    //}
 
     [Test]
     [TestCase(typeof(AbstractMessageHandler))]
@@ -1405,21 +1407,21 @@ public class TestMessageSubscriberTests
         Assert.That(ex.ParamName, Is.EqualTo("messageType"));
     }
 
-    [Test]
-    [TestCase(typeof(StructMessageHandler))]
-    [TestCase(typeof(StructMessageAsyncHandler))]
-    public void SubscribeTypeString_TMessageIsNotClass_ThrowsException(Type badHandlerType)
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //[TestCase(typeof(StructMessageHandler))]
+    //[TestCase(typeof(StructMessageAsyncHandler))]
+    //public void SubscribeTypeString_TMessageIsNotClass_ThrowsException(Type badHandlerType)
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        // Act
-        var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType), "some-topic");
+    //    // Act
+    //    var ex = Assert.Throws<ArgumentException>(() => subscriber.Subscribe(badHandlerType), "some-topic");
 
-        // Assert
-        Assert.That(ex, Has.Message.StartWith($"Cannot handle non-class message type '{typeof(StructMessage).FullName}'."));
-        Assert.That(ex.ParamName, Is.EqualTo("messageType"));
-    }
+    //    // Assert
+    //    Assert.That(ex, Has.Message.StartWith($"Cannot handle non-class message type '{typeof(StructMessage).FullName}'."));
+    //    Assert.That(ex.ParamName, Is.EqualTo("messageType"));
+    //}
 
     [Test]
     public async Task SubscribeTypeString_TMessageCtorThrows_LogsException()
@@ -1427,7 +1429,7 @@ public class TestMessageSubscriberTests
         // Arrange
         using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        using var publisher = new TestMessagePublisher(_media);
+        using var publisher = new TestMessagePublisher(_media, _logger);
         publisher.Start();
 
         var message = new DecayingMessage
@@ -1479,37 +1481,37 @@ public class TestMessageSubscriberTests
 
     // todo: review ut-s of entire 'Bundle.Handle', 'Bundle.AsyncHandle' loops. If an exception was thrown at any step, we must give the chance to other handlers. 
 
-    [Test]
-    public async Task SubscribeTypeString_SyncHandlerThrows_RestDoRun()
-    {
-        // Arrange
-        using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
+    //[Test]
+    //public async Task SubscribeTypeString_SyncHandlerThrows_RestDoRun()
+    //{
+    //    // Arrange
+    //    using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler), "some-topic"); // #0 will handle
-        subscriber.Subscribe(typeof(FishHaterHandler), "some-topic"); // #1 will fail
-        subscriber.Subscribe(typeof(WelcomeHandler), "some-topic"); // #2 will handle
+    //    subscriber.Subscribe(typeof(HelloHandler), "some-topic"); // #0 will handle
+    //    subscriber.Subscribe(typeof(FishHaterHandler), "some-topic"); // #1 will fail
+    //    subscriber.Subscribe(typeof(WelcomeHandler), "some-topic"); // #2 will handle
 
-        subscriber.Start();
+    //    subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
-        publisher.Start();
+    //    using var publisher = new TestMessagePublisher(_media);
+    //    publisher.Start();
 
-        var message = new HelloMessage("Small Fish")
-        {
-            Topic = "some-topic",
-        };
+    //    var message = new HelloMessage("Small Fish")
+    //    {
+    //        Topic = "some-topic",
+    //    };
 
-        // Act
-        publisher.Publish(message);
+    //    // Act
+    //    publisher.Publish(message);
 
-        await Task.Delay(300);
+    //    await Task.Delay(300);
 
-        // Assert
-        var log = this.CurrentLog;
-        Assert.That(log, Does.Contain("Hello sync (topic: 'some-topic'), Small Fish!"));
-        Assert.That(log, Does.Contain("I hate you sync (topic: 'some-topic'), 'Small Fish'! Exception thrown!"));
-        Assert.That(log, Does.Contain("Welcome sync (topic: 'some-topic'), Small Fish!"));
-    }
+    //    // Assert
+    //    var log = this.CurrentLog;
+    //    Assert.That(log, Does.Contain("Hello sync (topic: 'some-topic'), Small Fish!"));
+    //    Assert.That(log, Does.Contain("I hate you sync (topic: 'some-topic'), 'Small Fish'! Exception thrown!"));
+    //    Assert.That(log, Does.Contain("Welcome sync (topic: 'some-topic'), Small Fish!"));
+    //}
 
     // todo: when topic is present, topicless subscription does not fire (sync or async) - [2021-03-31] Is it so? I think now that vice versa
 
@@ -1524,7 +1526,7 @@ public class TestMessageSubscriberTests
         subscriber.Subscribe(typeof(FaultingHelloAsyncHandler), "some-topic");
         subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
+        using var publisher = new TestMessagePublisher(_media, _logger);
         publisher.Start();
 
         // Act
@@ -1556,7 +1558,7 @@ public class TestMessageSubscriberTests
 
         subscriber.Start();
 
-        using var publisher = new TestMessagePublisher(_media);
+        using var publisher = new TestMessagePublisher(_media, _logger);
         publisher.Start();
 
         // Act
@@ -1632,10 +1634,10 @@ public class TestMessageSubscriberTests
         // Arrange
         using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler));
-        subscriber.Subscribe(typeof(WelcomeHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
+        subscriber.Subscribe(typeof(WelcomeAsyncHandler));
 
-        subscriber.Subscribe(typeof(ByeHandler));
+        subscriber.Subscribe(typeof(ByeAsyncHandler));
 
         subscriber.Start();
 
@@ -1649,14 +1651,14 @@ public class TestMessageSubscriberTests
         Assert.That(info0.MessageType, Is.EqualTo(typeof(HelloMessage)));
         Assert.That(info0.Topic, Is.Null);
         CollectionAssert.AreEqual(
-            new[] { typeof(HelloHandler), typeof(WelcomeHandler) },
+            new[] { typeof(HelloAsyncHandler), typeof(WelcomeAsyncHandler) },
             info0.MessageHandlerTypes);
 
         var info1 = subscriptions[1];
         Assert.That(info1.MessageType, Is.EqualTo(typeof(ByeMessage)));
         Assert.That(info1.Topic, Is.Null);
         CollectionAssert.AreEqual(
-            new[] { typeof(ByeHandler), },
+            new[] { typeof(ByeAsyncHandler), },
             info1.MessageHandlerTypes);
     }
 
@@ -1666,10 +1668,10 @@ public class TestMessageSubscriberTests
         // Arrange
         using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler));
-        subscriber.Subscribe(typeof(WelcomeHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
+        subscriber.Subscribe(typeof(WelcomeAsyncHandler));
 
-        subscriber.Subscribe(typeof(ByeHandler));
+        subscriber.Subscribe(typeof(ByeAsyncHandler));
 
         subscriber.Start();
         subscriber.Stop();
@@ -1684,14 +1686,14 @@ public class TestMessageSubscriberTests
         Assert.That(info0.MessageType, Is.EqualTo(typeof(HelloMessage)));
         Assert.That(info0.Topic, Is.Null);
         CollectionAssert.AreEqual(
-            new[] { typeof(HelloHandler), typeof(WelcomeHandler) },
+            new[] { typeof(HelloAsyncHandler), typeof(WelcomeAsyncHandler) },
             info0.MessageHandlerTypes);
 
         var info1 = subscriptions[1];
         Assert.That(info1.MessageType, Is.EqualTo(typeof(ByeMessage)));
         Assert.That(info1.Topic, Is.Null);
         CollectionAssert.AreEqual(
-            new[] { typeof(ByeHandler), },
+            new[] { typeof(ByeAsyncHandler), },
             info1.MessageHandlerTypes);
     }
 
@@ -1701,8 +1703,8 @@ public class TestMessageSubscriberTests
         // Arrange
         using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
 
-        subscriber.Subscribe(typeof(HelloHandler));
-        subscriber.Subscribe(typeof(WelcomeHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
+        subscriber.Subscribe(typeof(WelcomeAsyncHandler));
 
         subscriber.Start();
 
@@ -1981,8 +1983,8 @@ public class TestMessageSubscriberTests
         // Arrange
         using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
-        subscriber.Subscribe(typeof(HelloHandler));
-        subscriber.Subscribe(typeof(WelcomeHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
+        subscriber.Subscribe(typeof(WelcomeAsyncHandler));
 
         subscriber.Subscribe(typeof(ByeAsyncHandler));
         subscriber.Subscribe(typeof(BeBackAsyncHandler));
@@ -1997,9 +1999,6 @@ public class TestMessageSubscriberTests
 
         // Assert
         var log = this.CurrentLog;
-
-        Assert.That(log, Does.Contain("Hello sync (no topic), Ira!"));
-        Assert.That(log, Does.Contain("Welcome sync (no topic), Ira!"));
 
         Assert.That(log, Does.Contain("Bye async (no topic), Olia!"));
         Assert.That(log, Does.Contain("Be back async (no topic), Olia!"));
@@ -2026,8 +2025,8 @@ public class TestMessageSubscriberTests
         // Arrange
         using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>("sub");
 
-        subscriber.Subscribe(typeof(HelloHandler));
-        subscriber.Subscribe(typeof(WelcomeHandler));
+        subscriber.Subscribe(typeof(HelloAsyncHandler));
+        subscriber.Subscribe(typeof(WelcomeAsyncHandler));
 
         subscriber.Subscribe(typeof(ByeAsyncHandler));
         subscriber.Subscribe(typeof(BeBackAsyncHandler));
@@ -2052,9 +2051,6 @@ public class TestMessageSubscriberTests
 
         // Assert
         var log = this.CurrentLog;
-
-        Assert.That(log, Does.Contain("Hello sync (no topic), Manuela!"));
-        Assert.That(log, Does.Contain("Welcome sync (no topic), Manuela!"));
 
         Assert.That(log, Does.Contain("Bye async (no topic), Alex!"));
         Assert.That(log, Does.Contain("Be back async (no topic), Alex!"));
@@ -2172,7 +2168,7 @@ public class TestMessageSubscriberTests
     {
         // Arrange
         using var subscriber = this.CreateMessageSubscriber<GoodContextFactory>();
-        subscriber.Logger = _logger;
+        //subscriber.Logger = _logger;
 
         subscriber.Subscribe(typeof(HelloAsyncHandler));
         subscriber.Start();

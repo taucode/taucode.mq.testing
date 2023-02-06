@@ -1,10 +1,8 @@
-﻿using Microsoft.Extensions.Logging;
-using Moq;
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using NUnit.Framework;
 using Serilog;
-using Serilog.Extensions.Logging;
-using TauCode.Infrastructure.Logging;
+using System.Text;
+using TauCode.IO;
 using TauCode.Mq.Testing.Tests.Messages;
 using TauCode.Working;
 
@@ -13,27 +11,25 @@ namespace TauCode.Mq.Testing.Tests;
 [TestFixture]
 public class TestMessagePublisherTests
 {
-    private StringLogger _logger;
+    private ILogger _logger;
+    private StringWriterWithEncoding _writer = null!;
+
     private ITestMqMedia _media;
 
     [SetUp]
     public void SetUp()
     {
-        _logger = new StringLogger();
-        _media = new TestMqMedia(_logger);
-
-        var collection = new LoggerProviderCollection();
-
-        Log.Logger = new LoggerConfiguration()
-            .WriteTo.Providers(collection)
-            .MinimumLevel
-            .Debug()
+        _writer = new StringWriterWithEncoding(Encoding.UTF8);
+        _logger = new LoggerConfiguration()
+            .WriteTo.TextWriter(
+                _writer,
+                outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}]{ObjectTag} {Message}{NewLine}{Exception}"
+            )
+            .MinimumLevel.Verbose()
             .CreateLogger();
+        Log.Logger = _logger;
 
-        var providerMock = new Mock<ILoggerProvider>();
-        providerMock.Setup(x => x.CreateLogger(It.IsAny<string>())).Returns(_logger);
-
-        collection.AddProvider(providerMock.Object);
+        _media = new TestMqMedia(_logger);
     }
 
     [TearDown]
@@ -44,7 +40,7 @@ public class TestMessagePublisherTests
 
     private IMessagePublisher CreateMessagePublisher(string name = null)
     {
-        var messagePublisher = new TestMessagePublisher(_media)
+        var messagePublisher = new TestMessagePublisher(_media, _logger)
         {
             Name = name,
         };
@@ -60,7 +56,7 @@ public class TestMessagePublisherTests
         // Arrange
 
         // Act
-        using IMessagePublisher messagePublisher = new TestMessagePublisher(_media);
+        using IMessagePublisher messagePublisher = new TestMessagePublisher(_media, _logger);
 
         // Assert
         Assert.Pass();
@@ -72,7 +68,7 @@ public class TestMessagePublisherTests
         // Arrange
 
         // Act
-        var ex = Assert.Throws<ArgumentNullException>(() => new TestMessagePublisher(null));
+        var ex = Assert.Throws<ArgumentNullException>(() => new TestMessagePublisher(null, _logger));
 
         // Assert
         Assert.That(ex.ParamName, Is.EqualTo("media"));
@@ -98,10 +94,18 @@ public class TestMessagePublisherTests
         string name2;
         string nameWithTopic2;
 
-        using var sub1 = _media.Subscribe<HelloMessage>(message => name = message.Name);
+        using var sub1 = _media.Subscribe<HelloMessage>((message, token) =>
+        {
+            name = message.Name;
+            return Task.CompletedTask;
+        });
 
         using var sub2 = _media.Subscribe<HelloMessage>(
-            message => nameWithTopic = message.Name,
+            (message, token) =>
+            {
+                nameWithTopic = message.Name;
+                return Task.CompletedTask;
+            },
             "some-topic");
 
         // Act
@@ -222,7 +226,7 @@ public class TestMessagePublisherTests
         var ex = Assert.Throws<InvalidOperationException>(() => publisher.Publish(new HelloMessage()));
 
         // Assert
-        Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Publish'. Worker state is 'Stopped'."));
+        Assert.That(ex, Has.Message.StartWith("Cannot perform operation 'Publish'. Worker state is 'Stopped'."));
     }
 
     [Test]
@@ -239,7 +243,7 @@ public class TestMessagePublisherTests
             }));
 
         // Assert
-        Assert.That(ex, Has.Message.EqualTo("Cannot perform operation 'Publish'. Worker state is 'Stopped'."));
+        Assert.That(ex, Has.Message.StartWith("Cannot perform operation 'Publish'. Worker state is 'Stopped'."));
     }
 
     [Test]
@@ -283,7 +287,7 @@ public class TestMessagePublisherTests
     public void Name_NotDisposed_IsChangedAndCanBeRead()
     {
         // Arrange
-        using var publisher = new TestMessagePublisher(_media)
+        using var publisher = new TestMessagePublisher(_media, _logger)
         {
             Name = "pub_created",
         };
@@ -311,7 +315,7 @@ public class TestMessagePublisherTests
     public void Name_Disposed_CanOnlyBeRead()
     {
         // Arrange
-        using var publisher = new TestMessagePublisher(_media)
+        using var publisher = new TestMessagePublisher(_media, _logger)
         {
             Name = "name1"
         };
@@ -338,7 +342,7 @@ public class TestMessagePublisherTests
         // Arrange
 
         // Act
-        using var publisher = new TestMessagePublisher(_media)
+        using var publisher = new TestMessagePublisher(_media, _logger)
         {
             Name = "my-publisher"
         };
@@ -446,7 +450,7 @@ public class TestMessagePublisherTests
         // Arrange
 
         // Act
-        using var publisher = new TestMessagePublisher(_media);
+        using var publisher = new TestMessagePublisher(_media, _logger);
 
         // Assert
         Assert.That(publisher.IsDisposed, Is.False);

@@ -5,9 +5,11 @@ namespace TauCode.Mq.Testing.Tests.BadHandlers;
 
 public class DecayingMessageHandler : MessageHandlerBase<DecayingMessage>
 {
-    public override void Handle(DecayingMessage message)
+    protected override Task HandleAsyncImpl(DecayingMessage message, CancellationToken cancellationToken = default)
     {
         Log.Information($"Decayed sync, {message.DecayedProperty}!");
         MessageRepository.Instance.Add(message);
+
+        return Task.CompletedTask;
     }
 }
