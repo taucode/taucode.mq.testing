@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>TauCode.Mq.Testing</id>
-    <version>1.6.0-alpha.1.2022-08-15.14-31</version>
+    <version>1.7.0-alpha.1.2023-02-06.10-47</version>
     <authors>TauCode</authors>
     <owners>TauCode</owners>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
@@ -13,13 +13,13 @@
       TauCode MQ testing support library
     </description>
     <releaseNotes>
-      Developing release 1.6.0.
+      Preparing release 1.7.0.
     </releaseNotes>
     <tags>taucode message queue unit testing tdd mq</tags>
     <dependencies>
       <group targetFramework=".NETCoreApp6.0">
-        <dependency id="Newtonsoft.Json" version="13.0.1" />
-        <dependency id="TauCode.Mq" version="1.6.0-alpha.1.2022-08-15.14-31" />
+        <dependency id="Newtonsoft.Json" version="13.0.2" />
+        <dependency id="TauCode.Mq" version="1.7.2" />
       </group>
     </dependencies>
   </metadata>
